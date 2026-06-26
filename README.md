@@ -2,7 +2,23 @@
 
 An interactive CLI for creating [Docker Sandboxes](https://docs.docker.com/ai/sandboxes).
 
-## Usage
+## Install
+
+Install `create-sbx` as a persistent command available on your PATH.
+
+**bash / zsh:**
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/geofflamrock/create-sbx/main/install.sh)
+```
+
+**PowerShell:**
+```powershell
+iex (irm https://raw.githubusercontent.com/geofflamrock/create-sbx/main/install.ps1)
+```
+
+Once installed, run `create-sbx` from anywhere.
+
+## Run without installing
 
 **bash / zsh:**
 ```bash
