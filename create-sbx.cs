@@ -105,7 +105,9 @@ if (AnsiConsole.Confirm("Add a kit?"))
                     .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
                     .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
                     .AddChoices(kits)
-                    .UseConverter(k => k.DisplayName));
+                    .UseConverter(k => k.Description is not null
+                        ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
+                        : k.DisplayName));
 
             if (selected.Count > 0)
             {
@@ -238,7 +240,8 @@ static List<Kit> FindKits(string cloneDir)
     {
         var specYaml = File.ReadAllText(rootSpec);
         var displayName = ParseDisplayName(specYaml) ?? Path.GetFileName(cloneDir);
-        kits.Add(new Kit(null, displayName!));
+        var description = ParseDescription(specYaml);
+        kits.Add(new Kit(null, displayName!, description));
     }
 
     foreach (var dir in Directory.GetDirectories(cloneDir).Order())
@@ -251,7 +254,8 @@ static List<Kit> FindKits(string cloneDir)
 
         var specYaml = File.ReadAllText(specFile);
         var displayName = ParseDisplayName(specYaml) ?? dirName;
-        kits.Add(new Kit(dirName, displayName));
+        var description = ParseDescription(specYaml);
+        kits.Add(new Kit(dirName, displayName, description));
     }
     return kits;
 }
@@ -291,6 +295,14 @@ static string? ParseDisplayName(string yaml)
     return null;
 }
 
+static string? ParseDescription(string yaml)
+{
+    var match = Regex.Match(yaml, @"^description:\s*(.+)$", RegexOptions.Multiline);
+    if (match.Success)
+        return match.Groups[1].Value.Trim().Trim('"');
+    return null;
+}
+
 record AgentOption(string Id, string DisplayName, string? Description);
-record Kit(string? Directory, string DisplayName);
+record Kit(string? Directory, string DisplayName, string? Description);
 record WorkspaceMode(string Name, string Description, bool UseClone);
