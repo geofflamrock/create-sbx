@@ -11,7 +11,7 @@ var name = AnsiConsole.Prompt(
 
 var builtInAgents = new List<AgentOption>
 {
-    new("claude", "Claude Code", "Anthropic's official CLI for Claude"),
+    new("claude", "Claude Code", null),
     new("codex", "Codex", null),
     new("copilot", "Copilot", null),
     new("cursor", "Cursor", null),
