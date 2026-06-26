@@ -12,22 +12,34 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - rid: linux-x64
+            os: ubuntu-latest
             artifact-name: create-sbx-linux-amd64
+            binary-name: create-sbx
           - rid: linux-arm64
+            os: ubuntu-24.04-arm
             artifact-name: create-sbx-linux-arm64
+            binary-name: create-sbx
           - rid: osx-x64
+            os: macos-13
             artifact-name: create-sbx-macos-amd64
+            binary-name: create-sbx
           - rid: osx-arm64
+            os: macos-latest
             artifact-name: create-sbx-macos-arm64
+            binary-name: create-sbx
           - rid: win-x64
+            os: windows-latest
             artifact-name: create-sbx-windows-amd64.exe
+            binary-name: create-sbx.exe
           - rid: win-arm64
+            os: windows-latest
             artifact-name: create-sbx-windows-arm64.exe
+            binary-name: create-sbx.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -40,12 +52,8 @@ jobs:
         run: dotnet publish create-sbx.cs -r ${{ matrix.rid }} -o ./output
 
       - name: Rename binary
-        run: |
-          if [ -f ./output/create-sbx.exe ]; then
-            mv ./output/create-sbx.exe ./output/${{ matrix.artifact-name }}
-          else
-            mv ./output/create-sbx ./output/${{ matrix.artifact-name }}
-          fi
+        shell: bash
+        run: mv ./output/${{ matrix.binary-name }} ./output/${{ matrix.artifact-name }}
 
       - uses: actions/upload-artifact@v4
         with:
