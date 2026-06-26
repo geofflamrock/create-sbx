@@ -65,8 +65,9 @@ var kitFlags = string.Join(" ", selected.Select(k =>
         ? $"--kit \"{gitUrl}#dir={k.Directory}\""
         : $"--kit \"{gitUrl}\""));
 
-var commandParts = new List<string> { "sbx run", kitFlags, $"--name \"{name}\"" };
+var commandParts = new List<string> { "sbx run", $"--name \"{name}\"", kitFlags };
 if (workspaceMode == "Clone") commandParts.Add("--clone");
+commandParts.Add("claude");
 commandParts.Add($"\"{workDir}\"");
 var command = string.Join(" ", commandParts);
 
