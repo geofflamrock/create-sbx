@@ -23,7 +23,7 @@ var workspaceMode = AnsiConsole.Prompt(
 
 AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
 
-var allKitFlags = new List<string>();
+var allKitUrls = new List<string>();
 
 if (AnsiConsole.Confirm("Add a kit?"))
 {
@@ -80,25 +80,47 @@ if (AnsiConsole.Confirm("Add a kit?"))
                 AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
                 var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
                 var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
-                allKitFlags.Add(string.Join(" ", selected.Select(k =>
-                    k.Directory is not null
-                        ? $"--kit \"{gitUrl}#dir={k.Directory}{refFragment}\""
-                        : string.IsNullOrEmpty(refFragment) ? $"--kit \"{gitUrl}\"" : $"--kit \"{gitUrl}#{refFragment.TrimStart('&')}\"")));
+                foreach (var k in selected)
+                    allKitUrls.Add(k.Directory is not null
+                        ? $"{gitUrl}#dir={k.Directory}{refFragment}"
+                        : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
             }
         }
     } while (AnsiConsole.Confirm("Add another kit?"));
 }
 
 var commandParts = new List<string> { "sbx run", $"--name \"{name}\"" };
-if (allKitFlags.Count > 0) commandParts.Add(string.Join(" ", allKitFlags));
+if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
 if (workspaceMode.UseClone) commandParts.Add("--clone");
 commandParts.Add("claude");
 commandParts.Add($"\"{workDir}\"");
 var command = string.Join(" ", commandParts);
 
+var sbxArgs = new List<string> { "run", "--name", name };
+foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
+if (workspaceMode.UseClone) sbxArgs.Add("--clone");
+sbxArgs.Add("claude");
+sbxArgs.Add(workDir);
+
 AnsiConsole.WriteLine();
-AnsiConsole.MarkupLine("[bold]Run this command to create your sandbox:[/]");
+AnsiConsole.MarkupLine("[bold]Command:[/]");
 AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
+AnsiConsole.WriteLine();
+
+if (AnsiConsole.Confirm("Create the sandbox?"))
+{
+    AnsiConsole.WriteLine();
+    var psi = new ProcessStartInfo("sbx") { UseShellExecute = false };
+    foreach (var arg in sbxArgs)
+        psi.ArgumentList.Add(arg);
+    using var proc = Process.Start(psi)!;
+    await proc.WaitForExitAsync();
+    if (proc.ExitCode != 0)
+    {
+        AnsiConsole.MarkupLine($"[red]sbx exited with code {proc.ExitCode}[/]");
+        return proc.ExitCode;
+    }
+}
 
 return 0;
 
