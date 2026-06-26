@@ -233,15 +233,16 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
 
 static List<Kit> FindKits(string cloneDir)
 {
+    var kits = new List<Kit>();
+
     var rootSpec = Path.Combine(cloneDir, "spec.yaml");
     if (File.Exists(rootSpec))
     {
         var specYaml = File.ReadAllText(rootSpec);
         var displayName = ParseDisplayName(specYaml) ?? Path.GetFileName(cloneDir);
-        return [new Kit(null, displayName!)];
+        kits.Add(new Kit(null, displayName!));
     }
 
-    var kits = new List<Kit>();
     foreach (var dir in Directory.GetDirectories(cloneDir).Order())
     {
         var dirName = Path.GetFileName(dir)!;
