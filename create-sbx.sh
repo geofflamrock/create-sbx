@@ -10,5 +10,6 @@ fi
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
-curl -sSL "https://raw.githubusercontent.com/geofflamrock/create-sbx/main/create-sbx.cs" -o "$tmpdir/create-sbx.cs"
-dotnet run "$tmpdir/create-sbx.cs"
+curl -sSL "https://raw.githubusercontent.com/geofflamrock/create-sbx/main/create-sbx" -o "$tmpdir/create-sbx"
+chmod +x "$tmpdir/create-sbx"
+"$tmpdir/create-sbx"
