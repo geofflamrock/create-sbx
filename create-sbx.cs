@@ -4,11 +4,19 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 
-var name = AnsiConsole.Ask<string>("Enter the [green]sandbox name[/]:");
+var defaultName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
+var name = AnsiConsole.Prompt(
+    new TextPrompt<string>("Enter the [green]sandbox name[/]:")
+        .DefaultValue(defaultName));
 
 var workDir = AnsiConsole.Prompt(
     new TextPrompt<string>("Enter the [green]working directory[/]:")
         .DefaultValue("."));
+
+var workspaceMode = AnsiConsole.Prompt(
+    new SelectionPrompt<string>()
+        .Title("Select [green]workspace mode[/]:")
+        .AddChoices("Direct", "Clone"));
 
 var kitFlags = "";
 
@@ -61,11 +69,6 @@ if (AnsiConsole.Confirm("Do you want to add any kits?"))
         }
     }
 }
-
-var workspaceMode = AnsiConsole.Prompt(
-    new SelectionPrompt<string>()
-        .Title("Select [green]workspace mode[/]:")
-        .AddChoices("Direct", "Clone"));
 
 var commandParts = new List<string> { "sbx run", $"--name \"{name}\"" };
 if (!string.IsNullOrEmpty(kitFlags)) commandParts.Add(kitFlags);
