@@ -25,7 +25,7 @@ jobs:
             artifact-name: create-sbx-linux-arm64
             binary-name: create-sbx
           - rid: osx-x64
-            os: macos-13
+            os: macos-latest
             artifact-name: create-sbx-macos-amd64
             binary-name: create-sbx
           - rid: osx-arm64
