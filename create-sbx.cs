@@ -1,7 +1,6 @@
 #:package Spectre.Console@0.57.0
 
 using System.Diagnostics;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 
@@ -19,9 +18,10 @@ List<Kit> kits = [];
 
 await AnsiConsole.Status()
     .Spinner(Spinner.Known.Dots)
-    .StartAsync("Searching for kits...", async ctx =>
+    .StartAsync("Fetching kits...", async ctx =>
     {
-        kits = await FindKits(owner, repo);
+        var cloneDir = await EnsureRepo(owner, repo, ctx);
+        kits = FindKits(cloneDir);
     });
 
 if (kits.Count == 0)
@@ -65,14 +65,54 @@ static (string? owner, string? repo) ParseGitHubUrl(string url)
     return (match.Groups["owner"].Value, match.Groups["repo"].Value);
 }
 
-static async Task<string> RunGh(params string[] args)
+static async Task<string> EnsureRepo(string owner, string repo, StatusContext ctx)
 {
-    var psi = new ProcessStartInfo("gh")
+    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo);
+
+    if (Directory.Exists(Path.Combine(cloneDir, ".git")))
+    {
+        ctx.Status("Fetching latest kits...");
+        await RunProcess("git", ["fetch", "--depth=1", "origin"], cloneDir);
+        await RunProcess("git", ["reset", "--hard", "FETCH_HEAD"], cloneDir);
+    }
+    else
+    {
+        ctx.Status("Cloning repository...");
+        Directory.CreateDirectory(Path.GetDirectoryName(cloneDir)!);
+        await RunProcess("git", ["clone", "--depth=1", $"https://github.com/{owner}/{repo}.git", cloneDir]);
+    }
+
+    return cloneDir;
+}
+
+static List<Kit> FindKits(string cloneDir)
+{
+    var kits = new List<Kit>();
+    foreach (var dir in Directory.GetDirectories(cloneDir).Order())
+    {
+        var dirName = Path.GetFileName(dir)!;
+        if (dirName.StartsWith('.')) continue;
+
+        var specFile = Path.Combine(dir, "spec.yaml");
+        if (!File.Exists(specFile)) continue;
+
+        var specYaml = File.ReadAllText(specFile);
+        var displayName = ParseDisplayName(specYaml) ?? dirName;
+        kits.Add(new Kit(dirName, displayName));
+    }
+    return kits;
+}
+
+static async Task RunProcess(string fileName, string[] args, string? workDir = null)
+{
+    var psi = new ProcessStartInfo(fileName)
     {
         RedirectStandardOutput = true,
         RedirectStandardError = true,
         UseShellExecute = false,
     };
+    if (workDir != null)
+        psi.WorkingDirectory = workDir;
     foreach (var arg in args)
         psi.ArgumentList.Add(arg);
 
@@ -83,46 +123,6 @@ static async Task<string> RunGh(params string[] args)
 
     if (process.ExitCode != 0)
         throw new Exception((await errorTask).Trim());
-    return await outputTask;
-}
-
-static async Task<List<Kit>> FindKits(string owner, string repo)
-{
-    var treeJson = await RunGh("api", $"repos/{owner}/{repo}/git/trees/main?recursive=1");
-
-    using var doc = JsonDocument.Parse(treeJson);
-    var tree = doc.RootElement.GetProperty("tree");
-
-    var specPaths = new List<string>();
-    foreach (var item in tree.EnumerateArray())
-    {
-        if (item.GetProperty("type").GetString() != "blob") continue;
-        var path = item.GetProperty("path").GetString()!;
-
-        var parts = path.Split('/');
-        if (parts.Length == 2 && parts[1].Equals("spec.yaml", StringComparison.OrdinalIgnoreCase))
-            specPaths.Add(path);
-    }
-
-    var kits = new List<Kit>();
-    foreach (var specPath in specPaths)
-    {
-        var dir = specPath.Split('/')[0];
-
-        try
-        {
-            var specYaml = await RunGh("api", $"repos/{owner}/{repo}/contents/{specPath}",
-                "-H", "Accept: application/vnd.github.raw+json");
-            var displayName = ParseDisplayName(specYaml) ?? dir;
-            kits.Add(new Kit(dir, displayName));
-        }
-        catch
-        {
-            kits.Add(new Kit(dir, dir));
-        }
-    }
-
-    return kits;
 }
 
 static string? ParseDisplayName(string yaml)
