@@ -9,20 +9,6 @@ var name = AnsiConsole.Prompt(
     new TextPrompt<string>("Enter the [green]sandbox name[/]:")
         .DefaultValue(defaultName));
 
-var workDir = AnsiConsole.Prompt(
-    new TextPrompt<string>("Enter the [green]working directory[/]:")
-        .DefaultValue("."));
-
-var workspaceMode = AnsiConsole.Prompt(
-    new SelectionPrompt<WorkspaceMode>()
-        .Title("Select [green]workspace mode[/]:")
-        .AddChoices(
-            new WorkspaceMode("Direct", "Mount the host directory directly into the sandbox", false),
-            new WorkspaceMode("Clone", "Clone the repository into the sandbox", true))
-        .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
-
-AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
-
 var builtInAgents = new List<AgentOption>
 {
     new("claude", "Claude Code", "Anthropic's official CLI for Claude"),
@@ -36,6 +22,38 @@ var builtInAgents = new List<AgentOption>
     new("docker-agent", "Docker Agent", null),
     new("shell", "Shell", "Agent-less sandbox for manual setup or testing"),
 };
+
+const string CustomAgentSentinel = "__custom__";
+
+var selectedAgent = AnsiConsole.Prompt(
+    new SelectionPrompt<AgentOption>()
+        .Title("Select [green]agent[/]:")
+        .AddChoices([.. builtInAgents, new AgentOption(CustomAgentSentinel, "Custom agent...", null)])
+        .UseConverter(a => a.Id == CustomAgentSentinel
+            ? "[grey]Custom agent...[/]"
+            : a.Description is not null
+                ? $"{a.DisplayName} [grey]({a.Id})[/] [grey]- {a.Description}[/]"
+                : $"{a.DisplayName} [grey]({a.Id})[/]"));
+
+var agentId = selectedAgent.Id == CustomAgentSentinel
+    ? AnsiConsole.Ask<string>("Enter the [green]custom agent identifier[/]:")
+    : selectedAgent.Id;
+
+AnsiConsole.MarkupLine($"Agent: [cyan]{Markup.Escape(agentId)}[/]");
+
+var workDir = AnsiConsole.Prompt(
+    new TextPrompt<string>("Enter the [green]working directory[/]:")
+        .DefaultValue("."));
+
+var workspaceMode = AnsiConsole.Prompt(
+    new SelectionPrompt<WorkspaceMode>()
+        .Title("Select [green]workspace mode[/]:")
+        .AddChoices(
+            new WorkspaceMode("Direct", "Mount the host directory directly into the sandbox", false),
+            new WorkspaceMode("Clone", "Clone the repository into the sandbox", true))
+        .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
+
+AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
 
 var allKitUrls = new List<string>();
 
@@ -102,24 +120,6 @@ if (AnsiConsole.Confirm("Add a kit?"))
         }
     } while (AnsiConsole.Confirm("Add another kit?"));
 }
-
-const string CustomAgentSentinel = "__custom__";
-
-var selectedAgent = AnsiConsole.Prompt(
-    new SelectionPrompt<AgentOption>()
-        .Title("Select [green]agent[/]:")
-        .AddChoices([.. builtInAgents, new AgentOption(CustomAgentSentinel, "Custom agent...", null)])
-        .UseConverter(a => a.Id == CustomAgentSentinel
-            ? "[grey]Custom agent...[/]"
-            : a.Description is not null
-                ? $"{a.DisplayName} [grey]({a.Id})[/] [grey]- {a.Description}[/]"
-                : $"{a.DisplayName} [grey]({a.Id})[/]"));
-
-var agentId = selectedAgent.Id == CustomAgentSentinel
-    ? AnsiConsole.Ask<string>("Enter the [green]custom agent identifier[/]:")
-    : selectedAgent.Id;
-
-AnsiConsole.MarkupLine($"Agent: [cyan]{Markup.Escape(agentId)}[/]");
 
 var commandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
 if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
