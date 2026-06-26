@@ -206,25 +206,27 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
 {
     var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo);
 
+    AnsiConsole.WriteLine($"Kit directory: {cloneDir}");
+
     if (Directory.Exists(Path.Combine(cloneDir, ".git")))
     {
         ctx.Status("Fetching latest kits...");
         if (string.IsNullOrEmpty(branch))
-            await RunProcess("git", ["fetch", "origin"], cloneDir);
+            await RunProcess("git", ["fetch", "origin"], cloneDir, log: true);
         else
-            await RunProcess("git", ["fetch", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], cloneDir);
+            await RunProcess("git", ["fetch", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], cloneDir, log: true);
     }
     else
     {
         ctx.Status("Cloning repository...");
         Directory.CreateDirectory(Path.GetDirectoryName(cloneDir)!);
-        await RunProcess("git", ["clone", $"https://github.com/{owner}/{repo}.git", cloneDir]);
+        await RunProcess("git", ["clone", $"https://github.com/{owner}/{repo}.git", cloneDir], log: true);
     }
 
     if (string.IsNullOrEmpty(branch))
-        await RunProcess("git", ["checkout", "--detach", "origin/HEAD"], cloneDir);
+        await RunProcess("git", ["checkout", "--detach", "origin/HEAD"], cloneDir, log: true);
     else
-        await RunProcess("git", ["checkout", "--detach", $"origin/{branch}"], cloneDir);
+        await RunProcess("git", ["checkout", "--detach", $"origin/{branch}"], cloneDir, log: true);
 
     return cloneDir;
 }
@@ -255,8 +257,11 @@ static List<Kit> FindKits(string cloneDir)
     return kits;
 }
 
-static async Task RunProcess(string fileName, string[] args, string? workDir = null)
+static async Task RunProcess(string fileName, string[] args, string? workDir = null, bool log = false)
 {
+    if (log)
+        AnsiConsole.WriteLine($"$ {fileName} {string.Join(" ", args)}");
+
     var psi = new ProcessStartInfo(fileName)
     {
         RedirectStandardOutput = true,
@@ -273,8 +278,18 @@ static async Task RunProcess(string fileName, string[] args, string? workDir = n
     var errorTask = process.StandardError.ReadToEndAsync();
     await process.WaitForExitAsync();
 
+    var output = await outputTask;
+    var error = await errorTask;
+
+    if (log)
+    {
+        if (!string.IsNullOrWhiteSpace(output)) AnsiConsole.WriteLine(output.TrimEnd());
+        if (!string.IsNullOrWhiteSpace(error)) AnsiConsole.WriteLine(error.TrimEnd());
+        AnsiConsole.WriteLine($"Exit code: {process.ExitCode}");
+    }
+
     if (process.ExitCode != 0)
-        throw new Exception((await errorTask).Trim());
+        throw new Exception(error.Trim());
 }
 
 static string? ParseDisplayName(string yaml)
