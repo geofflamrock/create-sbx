@@ -48,12 +48,27 @@ if (selected.Count == 0)
     return 0;
 }
 
+var name = AnsiConsole.Ask<string>("Enter the [green]sandbox name[/]:");
+
+var workspaceMode = AnsiConsole.Prompt(
+    new SelectionPrompt<string>()
+        .Title("Select [green]workspace mode[/]:")
+        .AddChoices("Direct", "Clone"));
+
+var workDir = AnsiConsole.Prompt(
+    new TextPrompt<string>("Enter the [green]working directory[/]:")
+        .DefaultValue("."));
+
 var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
 var kitFlags = string.Join(" ", selected.Select(k =>
     k.Directory is not null
         ? $"--kit \"{gitUrl}#dir={k.Directory}\""
         : $"--kit \"{gitUrl}\""));
-var command = $"sbx run {kitFlags}";
+
+var commandParts = new List<string> { "sbx run", kitFlags, $"--name \"{name}\"" };
+if (workspaceMode == "Clone") commandParts.Add("--clone");
+commandParts.Add($"\"{workDir}\"");
+var command = string.Join(" ", commandParts);
 
 AnsiConsole.WriteLine();
 AnsiConsole.MarkupLine("[bold]Run this command to create your sandbox:[/]");
