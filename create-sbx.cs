@@ -25,7 +25,7 @@ AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
 
 var allKitFlags = new List<string>();
 
-if (AnsiConsole.Confirm("Do you want to add any kits?"))
+if (AnsiConsole.Confirm("Add a kit?"))
 {
     var recentUrls = LoadRecentUrls();
 
@@ -86,7 +86,7 @@ if (AnsiConsole.Confirm("Do you want to add any kits?"))
                         : string.IsNullOrEmpty(refFragment) ? $"--kit \"{gitUrl}\"" : $"--kit \"{gitUrl}#{refFragment.TrimStart('&')}\"")));
             }
         }
-    } while (AnsiConsole.Confirm("Do you want to add kits from another URL?"));
+    } while (AnsiConsole.Confirm("Add another kit?"));
 }
 
 var commandParts = new List<string> { "sbx run", $"--name \"{name}\"" };
@@ -104,7 +104,7 @@ return 0;
 
 static string PromptForUrl(List<string> recentUrls)
 {
-    const string NewUrlOption = "Enter a new URL...";
+    const string NewUrlOption = "Enter kit URL";
 
     if (recentUrls.Count > 0)
     {
