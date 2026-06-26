@@ -1,6 +1,6 @@
 # create-sbx
 
-An interactive CLI for creating [sbx](https://github.com/geofflamrock/sbx) sandboxes.
+An interactive CLI for creating [sbx](https://docs.docker.com/ai/sandboxes) sandboxes.
 
 ## Usage
 
@@ -17,4 +17,4 @@ iex (irm https://raw.githubusercontent.com/geofflamrock/create-sbx/main/create-s
 ## Requirements
 
 - [.NET](https://dot.net) (for running the C# script)
-- [sbx](https://github.com/geofflamrock/sbx)
+- [sbx](https://docs.docker.com/ai/sandboxes)
