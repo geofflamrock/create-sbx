@@ -49,7 +49,10 @@ if (selected.Count == 0)
 }
 
 var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
-var kitFlags = string.Join(" ", selected.Select(k => $"--kit \"{gitUrl}#dir={k.Directory}\""));
+var kitFlags = string.Join(" ", selected.Select(k =>
+    k.Directory is not null
+        ? $"--kit \"{gitUrl}#dir={k.Directory}\""
+        : $"--kit \"{gitUrl}\""));
 var command = $"sbx run {kitFlags}";
 
 AnsiConsole.WriteLine();
@@ -87,6 +90,16 @@ static async Task<string> EnsureRepo(string owner, string repo, StatusContext ct
 
 static List<Kit> FindKits(string cloneDir)
 {
+    // If the root contains spec.yaml, the whole repo is a single kit
+    var rootSpec = Path.Combine(cloneDir, "spec.yaml");
+    if (File.Exists(rootSpec))
+    {
+        var specYaml = File.ReadAllText(rootSpec);
+        var displayName = ParseDisplayName(specYaml) ?? Path.GetFileName(cloneDir);
+        return [new Kit(null, displayName!)];
+    }
+
+    // Otherwise look for kits in top-level subdirectories
     var kits = new List<Kit>();
     foreach (var dir in Directory.GetDirectories(cloneDir).Order())
     {
@@ -138,4 +151,4 @@ static string? ParseDisplayName(string yaml)
     return null;
 }
 
-record Kit(string Directory, string DisplayName);
+record Kit(string? Directory, string DisplayName);
