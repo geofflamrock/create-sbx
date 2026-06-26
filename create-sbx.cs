@@ -209,7 +209,10 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
     if (Directory.Exists(Path.Combine(cloneDir, ".git")))
     {
         ctx.Status("Fetching latest kits...");
-        await RunProcess("git", ["fetch", "origin"], cloneDir);
+        if (string.IsNullOrEmpty(branch))
+            await RunProcess("git", ["fetch", "origin"], cloneDir);
+        else
+            await RunProcess("git", ["fetch", "origin", branch], cloneDir);
     }
     else
     {
