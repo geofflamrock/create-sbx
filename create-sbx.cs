@@ -21,6 +21,8 @@ var workspaceMode = AnsiConsole.Prompt(
             new WorkspaceMode("Clone", "Clone the repository into the sandbox", true))
         .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
 
+AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
+
 var allKitFlags = new List<string>();
 
 if (AnsiConsole.Confirm("Do you want to add any kits?"))
@@ -70,6 +72,7 @@ if (AnsiConsole.Confirm("Do you want to add any kits?"))
 
             if (selected.Count > 0)
             {
+                AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
                 var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
                 allKitFlags.Add(string.Join(" ", selected.Select(k =>
                     k.Directory is not null
