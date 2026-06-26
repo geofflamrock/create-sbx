@@ -11,7 +11,7 @@ $binDir = Join-Path $HOME ".local\bin"
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 
-$appPath = Join-Path $installDir "create-sbx"
+$appPath = Join-Path $installDir "create-sbx.cs"
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/geofflamrock/create-sbx/main/create-sbx.cs" -OutFile $appPath
 
 $wrapperPath = Join-Path $binDir "create-sbx.ps1"
