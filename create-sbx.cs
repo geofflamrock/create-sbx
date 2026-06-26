@@ -209,7 +209,10 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
     if (Directory.Exists(Path.Combine(cloneDir, ".git")))
     {
         ctx.Status("Fetching latest kits...");
-        await RunProcess("git", ["fetch", "origin"], cloneDir);
+        if (string.IsNullOrEmpty(branch))
+            await RunProcess("git", ["fetch", "origin"], cloneDir);
+        else
+            await RunProcess("git", ["fetch", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], cloneDir);
     }
     else
     {
@@ -221,22 +224,23 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
     if (string.IsNullOrEmpty(branch))
         await RunProcess("git", ["checkout", "--detach", "origin/HEAD"], cloneDir);
     else
-        await RunProcess("git", ["checkout", "-B", branch, $"origin/{branch}"], cloneDir);
+        await RunProcess("git", ["checkout", "--detach", $"origin/{branch}"], cloneDir);
 
     return cloneDir;
 }
 
 static List<Kit> FindKits(string cloneDir)
 {
+    var kits = new List<Kit>();
+
     var rootSpec = Path.Combine(cloneDir, "spec.yaml");
     if (File.Exists(rootSpec))
     {
         var specYaml = File.ReadAllText(rootSpec);
         var displayName = ParseDisplayName(specYaml) ?? Path.GetFileName(cloneDir);
-        return [new Kit(null, displayName!)];
+        kits.Add(new Kit(null, displayName!));
     }
 
-    var kits = new List<Kit>();
     foreach (var dir in Directory.GetDirectories(cloneDir).Order())
     {
         var dirName = Path.GetFileName(dir)!;
