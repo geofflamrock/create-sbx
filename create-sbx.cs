@@ -89,14 +89,14 @@ if (AnsiConsole.Confirm("Add a kit?"))
     } while (AnsiConsole.Confirm("Add another kit?"));
 }
 
-var commandParts = new List<string> { "sbx run", $"--name \"{name}\"" };
+var commandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
 if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
 if (workspaceMode.UseClone) commandParts.Add("--clone");
 commandParts.Add("claude");
 commandParts.Add($"\"{workDir}\"");
 var command = string.Join(" ", commandParts);
 
-var sbxArgs = new List<string> { "run", "--name", name };
+var sbxArgs = new List<string> { "create", "--name", name };
 foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
 if (workspaceMode.UseClone) sbxArgs.Add("--clone");
 sbxArgs.Add("claude");
@@ -109,6 +109,8 @@ AnsiConsole.WriteLine();
 
 if (AnsiConsole.Confirm("Create the sandbox?"))
 {
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine($"Creating sandbox [cyan]{Markup.Escape(name)}[/]...");
     AnsiConsole.WriteLine();
     var psi = new ProcessStartInfo("sbx") { UseShellExecute = false };
     foreach (var arg in sbxArgs)
