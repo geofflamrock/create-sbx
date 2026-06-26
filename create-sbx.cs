@@ -212,7 +212,7 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
         if (string.IsNullOrEmpty(branch))
             await RunProcess("git", ["fetch", "origin"], cloneDir);
         else
-            await RunProcess("git", ["fetch", "origin", $"refs/heads/{branch}:refs/remotes/origin/{branch}"], cloneDir);
+            await RunProcess("git", ["fetch", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], cloneDir);
     }
     else
     {
@@ -224,7 +224,7 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
     if (string.IsNullOrEmpty(branch))
         await RunProcess("git", ["checkout", "--detach", "origin/HEAD"], cloneDir);
     else
-        await RunProcess("git", ["checkout", "-B", branch, $"origin/{branch}"], cloneDir);
+        await RunProcess("git", ["checkout", "--detach", $"origin/{branch}"], cloneDir);
 
     return cloneDir;
 }
