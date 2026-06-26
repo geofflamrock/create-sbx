@@ -43,12 +43,16 @@ if (AnsiConsole.Confirm("Do you want to add any kits?"))
         recentUrls = [repoUrl, .. recentUrls.Where(u => u != repoUrl).Take(9)];
         SaveRecentUrls(recentUrls);
 
+        var branch = AnsiConsole.Prompt(
+            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                .AllowEmpty());
+
         List<Kit> kits = [];
         await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
             .StartAsync("Fetching kits...", async ctx =>
             {
-                var cloneDir = await EnsureRepo(owner, repo, ctx);
+                var cloneDir = await EnsureRepo(owner, repo, branch, ctx);
                 kits = FindKits(cloneDir);
             });
 
@@ -74,10 +78,11 @@ if (AnsiConsole.Confirm("Do you want to add any kits?"))
             {
                 AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
                 var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
+                var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
                 allKitFlags.Add(string.Join(" ", selected.Select(k =>
                     k.Directory is not null
-                        ? $"--kit \"{gitUrl}#dir={k.Directory}\""
-                        : $"--kit \"{gitUrl}\"")));
+                        ? $"--kit \"{gitUrl}#dir={k.Directory}{refFragment}\""
+                        : string.IsNullOrEmpty(refFragment) ? $"--kit \"{gitUrl}\"" : $"--kit \"{gitUrl}#{refFragment.TrimStart('&')}\"")));
             }
         }
     } while (AnsiConsole.Confirm("Do you want to add kits from another URL?"));
@@ -139,21 +144,28 @@ static (string? owner, string? repo) ParseGitHubUrl(string url)
     return (match.Groups["owner"].Value, match.Groups["repo"].Value);
 }
 
-static async Task<string> EnsureRepo(string owner, string repo, StatusContext ctx)
+static async Task<string> EnsureRepo(string owner, string repo, string branch, StatusContext ctx)
 {
-    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo);
+    var dirName = string.IsNullOrEmpty(branch) ? repo : $"{repo}@{branch.Replace('/', '_')}";
+    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, dirName);
 
     if (Directory.Exists(Path.Combine(cloneDir, ".git")))
     {
         ctx.Status("Fetching latest kits...");
-        await RunProcess("git", ["fetch", "--depth=1", "origin"], cloneDir);
+        string[] fetchArgs = string.IsNullOrEmpty(branch)
+            ? ["fetch", "--depth=1", "origin"]
+            : ["fetch", "--depth=1", "origin", branch];
+        await RunProcess("git", fetchArgs, cloneDir);
         await RunProcess("git", ["reset", "--hard", "FETCH_HEAD"], cloneDir);
     }
     else
     {
         ctx.Status("Cloning repository...");
         Directory.CreateDirectory(Path.GetDirectoryName(cloneDir)!);
-        await RunProcess("git", ["clone", "--depth=1", $"https://github.com/{owner}/{repo}.git", cloneDir]);
+        string[] cloneArgs = string.IsNullOrEmpty(branch)
+            ? ["clone", "--depth=1", $"https://github.com/{owner}/{repo}.git", cloneDir]
+            : ["clone", "--depth=1", "--branch", branch, $"https://github.com/{owner}/{repo}.git", cloneDir];
+        await RunProcess("git", cloneArgs);
     }
 
     return cloneDir;
