@@ -23,6 +23,20 @@ var workspaceMode = AnsiConsole.Prompt(
 
 AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
 
+var builtInAgents = new List<AgentOption>
+{
+    new("claude", "Claude Code", "Anthropic's official CLI for Claude"),
+    new("codex", "Codex", null),
+    new("copilot", "Copilot", null),
+    new("cursor", "Cursor", null),
+    new("droid", "Droid", null),
+    new("gemini", "Gemini", null),
+    new("kiro", "Kiro", null),
+    new("opencode", "OpenCode", null),
+    new("docker-agent", "Docker Agent", null),
+    new("shell", "Shell", "Agent-less sandbox for manual setup or testing"),
+};
+
 var allKitUrls = new List<string>();
 
 if (AnsiConsole.Confirm("Add a kit?"))
@@ -89,17 +103,35 @@ if (AnsiConsole.Confirm("Add a kit?"))
     } while (AnsiConsole.Confirm("Add another kit?"));
 }
 
+const string CustomAgentSentinel = "__custom__";
+
+var selectedAgent = AnsiConsole.Prompt(
+    new SelectionPrompt<AgentOption>()
+        .Title("Select [green]agent[/]:")
+        .AddChoices([.. builtInAgents, new AgentOption(CustomAgentSentinel, "Custom agent...", null)])
+        .UseConverter(a => a.Id == CustomAgentSentinel
+            ? "[grey]Custom agent...[/]"
+            : a.Description is not null
+                ? $"{a.DisplayName} [grey]({a.Id})[/] [grey]- {a.Description}[/]"
+                : $"{a.DisplayName} [grey]({a.Id})[/]"));
+
+var agentId = selectedAgent.Id == CustomAgentSentinel
+    ? AnsiConsole.Ask<string>("Enter the [green]custom agent identifier[/]:")
+    : selectedAgent.Id;
+
+AnsiConsole.MarkupLine($"Agent: [cyan]{Markup.Escape(agentId)}[/]");
+
 var commandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
 if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
 if (workspaceMode.UseClone) commandParts.Add("--clone");
-commandParts.Add("claude");
+commandParts.Add(agentId);
 commandParts.Add($"\"{workDir}\"");
 var command = string.Join(" ", commandParts);
 
 var sbxArgs = new List<string> { "create", "--name", name };
 foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
 if (workspaceMode.UseClone) sbxArgs.Add("--clone");
-sbxArgs.Add("claude");
+sbxArgs.Add(agentId);
 sbxArgs.Add(workDir);
 
 AnsiConsole.WriteLine();
@@ -254,5 +286,6 @@ static string? ParseDisplayName(string yaml)
     return null;
 }
 
+record AgentOption(string Id, string DisplayName, string? Description);
 record Kit(string? Directory, string DisplayName);
 record WorkspaceMode(string Name, string Description, bool UseClone);
