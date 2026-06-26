@@ -1,3 +1,5 @@
+#:package Spectre.Console@0.57.0
+
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Spectre.Console;
