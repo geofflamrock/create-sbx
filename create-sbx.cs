@@ -1,5 +1,6 @@
 #:package Spectre.Console@0.57.0
 
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Spectre.Console;
@@ -64,19 +65,34 @@ static (string? owner, string? repo) ParseGitHubUrl(string url)
     return (match.Groups["owner"].Value, match.Groups["repo"].Value);
 }
 
+static async Task<string> RunGh(params string[] args)
+{
+    var psi = new ProcessStartInfo("gh")
+    {
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+    };
+    foreach (var arg in args)
+        psi.ArgumentList.Add(arg);
+
+    using var process = Process.Start(psi)!;
+    var outputTask = process.StandardOutput.ReadToEndAsync();
+    var errorTask = process.StandardError.ReadToEndAsync();
+    await process.WaitForExitAsync();
+
+    if (process.ExitCode != 0)
+        throw new Exception((await errorTask).Trim());
+    return await outputTask;
+}
+
 static async Task<List<Kit>> FindKits(string owner, string repo)
 {
-    using var http = new HttpClient();
-    http.DefaultRequestHeaders.UserAgent.ParseAdd("create-sbx/1.0");
-
-    var treeUrl = $"https://api.github.com/repos/{owner}/{repo}/git/trees/main?recursive=1";
-    var treeJson = await http.GetStringAsync(treeUrl);
+    var treeJson = await RunGh("api", $"repos/{owner}/{repo}/git/trees/main?recursive=1");
 
     using var doc = JsonDocument.Parse(treeJson);
     var tree = doc.RootElement.GetProperty("tree");
 
-    // Find all spec.yaml files that are directly inside a top-level directory
-    // (i.e. path is "<dir>/spec.yaml", not nested deeper)
     var specPaths = new List<string>();
     foreach (var item in tree.EnumerateArray())
     {
@@ -92,11 +108,11 @@ static async Task<List<Kit>> FindKits(string owner, string repo)
     foreach (var specPath in specPaths)
     {
         var dir = specPath.Split('/')[0];
-        var rawUrl = $"https://raw.githubusercontent.com/{owner}/{repo}/main/{specPath}";
 
         try
         {
-            var specYaml = await http.GetStringAsync(rawUrl);
+            var specYaml = await RunGh("api", $"repos/{owner}/{repo}/contents/{specPath}",
+                "-H", "Accept: application/vnd.github.raw+json");
             var displayName = ParseDisplayName(specYaml) ?? dir;
             kits.Add(new Kit(dir, displayName));
         }
@@ -111,7 +127,6 @@ static async Task<List<Kit>> FindKits(string owner, string repo)
 
 static string? ParseDisplayName(string yaml)
 {
-    // Try displayName first, fall back to name
     var displayMatch = Regex.Match(yaml, @"^displayName:\s*(.+)$", RegexOptions.Multiline);
     if (displayMatch.Success)
         return displayMatch.Groups[1].Value.Trim().Trim('"');
