@@ -1,3 +1,4 @@
+#!/usr/bin/env -S dotnet run
 #:package Spectre.Console@0.57.0
 
 using System.Diagnostics;
