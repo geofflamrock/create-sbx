@@ -147,27 +147,24 @@ static (string? owner, string? repo) ParseGitHubUrl(string url)
 
 static async Task<string> EnsureRepo(string owner, string repo, string branch, StatusContext ctx)
 {
-    var dirName = string.IsNullOrEmpty(branch) ? repo : $"{repo}@{branch.Replace('/', '_')}";
-    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, dirName);
+    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo);
 
     if (Directory.Exists(Path.Combine(cloneDir, ".git")))
     {
         ctx.Status("Fetching latest kits...");
-        string[] fetchArgs = string.IsNullOrEmpty(branch)
-            ? ["fetch", "--depth=1", "origin"]
-            : ["fetch", "--depth=1", "origin", branch];
-        await RunProcess("git", fetchArgs, cloneDir);
-        await RunProcess("git", ["reset", "--hard", "FETCH_HEAD"], cloneDir);
+        await RunProcess("git", ["fetch", "origin"], cloneDir);
     }
     else
     {
         ctx.Status("Cloning repository...");
         Directory.CreateDirectory(Path.GetDirectoryName(cloneDir)!);
-        string[] cloneArgs = string.IsNullOrEmpty(branch)
-            ? ["clone", "--depth=1", $"https://github.com/{owner}/{repo}.git", cloneDir]
-            : ["clone", "--depth=1", "--branch", branch, $"https://github.com/{owner}/{repo}.git", cloneDir];
-        await RunProcess("git", cloneArgs);
+        await RunProcess("git", ["clone", $"https://github.com/{owner}/{repo}.git", cloneDir]);
     }
+
+    if (string.IsNullOrEmpty(branch))
+        await RunProcess("git", ["checkout", "--detach", "origin/HEAD"], cloneDir);
+    else
+        await RunProcess("git", ["checkout", "-B", branch, $"origin/{branch}"], cloneDir);
 
     return cloneDir;
 }
