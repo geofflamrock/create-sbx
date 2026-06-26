@@ -4,68 +4,71 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 
-var repoUrl = AnsiConsole.Ask<string>("Enter the [green]GitHub repository URL[/] containing sbx kits:");
-repoUrl = repoUrl.Trim().TrimEnd('/');
-
-var (owner, repo) = ParseGitHubUrl(repoUrl);
-if (owner is null || repo is null)
-{
-    AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-    return 1;
-}
-
-List<Kit> kits = [];
-
-await AnsiConsole.Status()
-    .Spinner(Spinner.Known.Dots)
-    .StartAsync("Fetching kits...", async ctx =>
-    {
-        var cloneDir = await EnsureRepo(owner, repo, ctx);
-        kits = FindKits(cloneDir);
-    });
-
-if (kits.Count == 0)
-{
-    AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
-    return 0;
-}
-
-AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
-
-var selected = AnsiConsole.Prompt(
-    new MultiSelectionPrompt<Kit>()
-        .Title("Select the [green]kits[/] to include:")
-        .NotRequired()
-        .PageSize(20)
-        .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
-        .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
-        .AddChoices(kits)
-        .UseConverter(k => k.DisplayName));
-
-if (selected.Count == 0)
-{
-    AnsiConsole.MarkupLine("[yellow]No kits selected.[/]");
-    return 0;
-}
-
 var name = AnsiConsole.Ask<string>("Enter the [green]sandbox name[/]:");
+
+var workDir = AnsiConsole.Prompt(
+    new TextPrompt<string>("Enter the [green]working directory[/]:")
+        .DefaultValue("."));
+
+var kitFlags = "";
+
+if (AnsiConsole.Confirm("Do you want to add any kits?"))
+{
+    var repoUrl = AnsiConsole.Ask<string>("Enter the [green]GitHub repository URL[/] containing sbx kits:");
+    repoUrl = repoUrl.Trim().TrimEnd('/');
+
+    var (owner, repo) = ParseGitHubUrl(repoUrl);
+    if (owner is null || repo is null)
+    {
+        AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+        return 1;
+    }
+
+    List<Kit> kits = [];
+    await AnsiConsole.Status()
+        .Spinner(Spinner.Known.Dots)
+        .StartAsync("Fetching kits...", async ctx =>
+        {
+            var cloneDir = await EnsureRepo(owner, repo, ctx);
+            kits = FindKits(cloneDir);
+        });
+
+    if (kits.Count == 0)
+    {
+        AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
+    }
+    else
+    {
+        AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
+
+        var selected = AnsiConsole.Prompt(
+            new MultiSelectionPrompt<Kit>()
+                .Title("Select the [green]kits[/] to include:")
+                .NotRequired()
+                .PageSize(20)
+                .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
+                .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
+                .AddChoices(kits)
+                .UseConverter(k => k.DisplayName));
+
+        if (selected.Count > 0)
+        {
+            var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
+            kitFlags = string.Join(" ", selected.Select(k =>
+                k.Directory is not null
+                    ? $"--kit \"{gitUrl}#dir={k.Directory}\""
+                    : $"--kit \"{gitUrl}\""));
+        }
+    }
+}
 
 var workspaceMode = AnsiConsole.Prompt(
     new SelectionPrompt<string>()
         .Title("Select [green]workspace mode[/]:")
         .AddChoices("Direct", "Clone"));
 
-var workDir = AnsiConsole.Prompt(
-    new TextPrompt<string>("Enter the [green]working directory[/]:")
-        .DefaultValue("."));
-
-var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
-var kitFlags = string.Join(" ", selected.Select(k =>
-    k.Directory is not null
-        ? $"--kit \"{gitUrl}#dir={k.Directory}\""
-        : $"--kit \"{gitUrl}\""));
-
-var commandParts = new List<string> { "sbx run", $"--name \"{name}\"", kitFlags };
+var commandParts = new List<string> { "sbx run", $"--name \"{name}\"" };
+if (!string.IsNullOrEmpty(kitFlags)) commandParts.Add(kitFlags);
 if (workspaceMode == "Clone") commandParts.Add("--clone");
 commandParts.Add("claude");
 commandParts.Add($"\"{workDir}\"");
