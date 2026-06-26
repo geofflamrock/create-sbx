@@ -76,7 +76,8 @@ if (AnsiConsole.Confirm("Do you want to add any kits?"))
 
             if (selected.Count > 0)
             {
-                AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
+                var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
+                AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
                 var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
                 var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
                 allKitFlags.Add(string.Join(" ", selected.Select(k =>
