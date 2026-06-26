@@ -14,65 +14,75 @@ var workDir = AnsiConsole.Prompt(
         .DefaultValue("."));
 
 var workspaceMode = AnsiConsole.Prompt(
-    new SelectionPrompt<string>()
+    new SelectionPrompt<WorkspaceMode>()
         .Title("Select [green]workspace mode[/]:")
-        .AddChoices("Direct", "Clone"));
+        .AddChoices(
+            new WorkspaceMode("Direct", "Mount the host directory directly into the sandbox", false),
+            new WorkspaceMode("Clone", "Clone the repository into the sandbox", true))
+        .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
 
-var kitFlags = "";
+var allKitFlags = new List<string>();
 
 if (AnsiConsole.Confirm("Do you want to add any kits?"))
 {
-    var repoUrl = AnsiConsole.Ask<string>("Enter the [green]GitHub repository URL[/] containing sbx kits:");
-    repoUrl = repoUrl.Trim().TrimEnd('/');
+    var recentUrls = LoadRecentUrls();
 
-    var (owner, repo) = ParseGitHubUrl(repoUrl);
-    if (owner is null || repo is null)
+    do
     {
-        AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-        return 1;
-    }
+        var repoUrl = PromptForUrl(recentUrls);
 
-    List<Kit> kits = [];
-    await AnsiConsole.Status()
-        .Spinner(Spinner.Known.Dots)
-        .StartAsync("Fetching kits...", async ctx =>
+        var (owner, repo) = ParseGitHubUrl(repoUrl);
+        if (owner is null || repo is null)
         {
-            var cloneDir = await EnsureRepo(owner, repo, ctx);
-            kits = FindKits(cloneDir);
-        });
-
-    if (kits.Count == 0)
-    {
-        AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
-    }
-    else
-    {
-        AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
-
-        var selected = AnsiConsole.Prompt(
-            new MultiSelectionPrompt<Kit>()
-                .Title("Select the [green]kits[/] to include:")
-                .NotRequired()
-                .PageSize(20)
-                .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
-                .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
-                .AddChoices(kits)
-                .UseConverter(k => k.DisplayName));
-
-        if (selected.Count > 0)
-        {
-            var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
-            kitFlags = string.Join(" ", selected.Select(k =>
-                k.Directory is not null
-                    ? $"--kit \"{gitUrl}#dir={k.Directory}\""
-                    : $"--kit \"{gitUrl}\""));
+            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+            break;
         }
-    }
+
+        recentUrls = [repoUrl, .. recentUrls.Where(u => u != repoUrl).Take(9)];
+        SaveRecentUrls(recentUrls);
+
+        List<Kit> kits = [];
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Fetching kits...", async ctx =>
+            {
+                var cloneDir = await EnsureRepo(owner, repo, ctx);
+                kits = FindKits(cloneDir);
+            });
+
+        if (kits.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
+
+            var selected = AnsiConsole.Prompt(
+                new MultiSelectionPrompt<Kit>()
+                    .Title("Select the [green]kits[/] to include:")
+                    .NotRequired()
+                    .PageSize(20)
+                    .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
+                    .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
+                    .AddChoices(kits)
+                    .UseConverter(k => k.DisplayName));
+
+            if (selected.Count > 0)
+            {
+                var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
+                allKitFlags.Add(string.Join(" ", selected.Select(k =>
+                    k.Directory is not null
+                        ? $"--kit \"{gitUrl}#dir={k.Directory}\""
+                        : $"--kit \"{gitUrl}\"")));
+            }
+        }
+    } while (AnsiConsole.Confirm("Do you want to add kits from another URL?"));
 }
 
 var commandParts = new List<string> { "sbx run", $"--name \"{name}\"" };
-if (!string.IsNullOrEmpty(kitFlags)) commandParts.Add(kitFlags);
-if (workspaceMode == "Clone") commandParts.Add("--clone");
+if (allKitFlags.Count > 0) commandParts.Add(string.Join(" ", allKitFlags));
+if (workspaceMode.UseClone) commandParts.Add("--clone");
 commandParts.Add("claude");
 commandParts.Add($"\"{workDir}\"");
 var command = string.Join(" ", commandParts);
@@ -82,6 +92,42 @@ AnsiConsole.MarkupLine("[bold]Run this command to create your sandbox:[/]");
 AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
 
 return 0;
+
+static string PromptForUrl(List<string> recentUrls)
+{
+    const string NewUrlOption = "Enter a new URL...";
+
+    if (recentUrls.Count > 0)
+    {
+        var choice = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Select a [green]kit repository URL[/]:")
+                .AddChoices([.. recentUrls, NewUrlOption]));
+
+        if (choice != NewUrlOption)
+            return choice;
+    }
+
+    var url = AnsiConsole.Ask<string>("Enter the [green]GitHub repository URL[/] containing sbx kits:");
+    return url.Trim().TrimEnd('/');
+}
+
+static string GetRecentUrlsPath() =>
+    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "create-sbx", "recent-urls.txt");
+
+static List<string> LoadRecentUrls()
+{
+    var path = GetRecentUrlsPath();
+    if (!File.Exists(path)) return [];
+    return [.. File.ReadAllLines(path).Where(l => !string.IsNullOrWhiteSpace(l))];
+}
+
+static void SaveRecentUrls(List<string> urls)
+{
+    var path = GetRecentUrlsPath();
+    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+    File.WriteAllLines(path, urls);
+}
 
 static (string? owner, string? repo) ParseGitHubUrl(string url)
 {
@@ -112,7 +158,6 @@ static async Task<string> EnsureRepo(string owner, string repo, StatusContext ct
 
 static List<Kit> FindKits(string cloneDir)
 {
-    // If the root contains spec.yaml, the whole repo is a single kit
     var rootSpec = Path.Combine(cloneDir, "spec.yaml");
     if (File.Exists(rootSpec))
     {
@@ -121,7 +166,6 @@ static List<Kit> FindKits(string cloneDir)
         return [new Kit(null, displayName!)];
     }
 
-    // Otherwise look for kits in top-level subdirectories
     var kits = new List<Kit>();
     foreach (var dir in Directory.GetDirectories(cloneDir).Order())
     {
@@ -174,3 +218,4 @@ static string? ParseDisplayName(string yaml)
 }
 
 record Kit(string? Directory, string DisplayName);
+record WorkspaceMode(string Name, string Description, bool UseClone);
