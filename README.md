@@ -8,29 +8,16 @@ Install `create-sbx` as a persistent command available on your PATH.
 
 **bash / zsh:**
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/geofflamrock/create-sbx/main/install.sh)
+curl -sSL https://raw.githubusercontent.com/geofflamrock/create-sbx/main/install.sh | bash
 ```
 
 **PowerShell:**
 ```powershell
-iex (irm https://raw.githubusercontent.com/geofflamrock/create-sbx/main/install.ps1)
+irm https://raw.githubusercontent.com/geofflamrock/create-sbx/main/install.ps1 | iex
 ```
 
 Once installed, run `create-sbx` from anywhere.
 
-## Run without installing
-
-**bash / zsh:**
-```bash
-bash <(curl -sSL https://raw.githubusercontent.com/geofflamrock/create-sbx/main/create-sbx.sh)
-```
-
-**PowerShell:**
-```powershell
-iex (irm https://raw.githubusercontent.com/geofflamrock/create-sbx/main/create-sbx.ps1)
-```
-
 ## Requirements
 
-- [.NET](https://dot.net) (for running the C# script)
 - [sbx](https://docs.docker.com/ai/sandboxes)
