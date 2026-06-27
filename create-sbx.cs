@@ -7,12 +7,12 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 
-var rootCommand = new RootCommand("Create an sbx (Docker Sandbox) with an agent");
+var rootCommand = new RootCommand("An interactive CLI for creating Docker Sandboxes using `sbx`");
 rootCommand.SetAction(async (ParseResult parseResult, CancellationToken ct) =>
-    await RunWizardAsync());
+    await RunAsync());
 return await rootCommand.Parse(args).InvokeAsync();
 
-async Task<int> RunWizardAsync()
+async Task<int> RunAsync()
 {
     var defaultName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
     var name = AnsiConsole.Prompt(
