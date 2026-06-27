@@ -54,8 +54,11 @@ jobs:
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             VERSION="${{ github.ref_name }}"
             VERSION="${VERSION#v}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            VERSION="0.0.0-pr${{ github.event.pull_request.number }}"
           else
-            VERSION="0.0.0-dev"
+            BRANCH="${{ github.ref_name }}"
+            VERSION="0.0.0-${BRANCH//[^a-zA-Z0-9-]/-}"
           fi
           dotnet publish create-sbx.cs -r ${{ matrix.rid }} -o ./output -p:Version="$VERSION"
 
