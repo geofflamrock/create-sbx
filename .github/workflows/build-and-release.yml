@@ -37,7 +37,7 @@ jobs:
             artifact-name: create-sbx-windows-amd64.exe
             binary-name: create-sbx.exe
           - rid: win-arm64
-            os: windows-latest
+            os: windows-11-arm
             artifact-name: create-sbx-windows-arm64.exe
             binary-name: create-sbx.exe
 
