@@ -59,6 +59,10 @@ jobs:
           fi
           dotnet publish create-sbx.cs -r ${{ matrix.rid }} -o ./output -p:Version="$VERSION"
 
+      - name: Verify --version
+        shell: bash
+        run: ./output/${{ matrix.binary-name }} --version
+
       - name: Rename binary
         shell: bash
         run: mv ./output/${{ matrix.binary-name }} ./output/${{ matrix.artifact-name }}
