@@ -1,21 +1,26 @@
 $ErrorActionPreference = 'Stop'
 
-if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    Write-Error "dotnet is required but not installed. Install it from https://dot.net"
-    exit 1
-}
-
 $installDir = Join-Path $HOME ".local\share\create-sbx"
 $binDir = Join-Path $HOME ".local\bin"
+
+$arch = $env:PROCESSOR_ARCHITECTURE
+switch ($arch) {
+    "AMD64" { $artifactName = "create-sbx-windows-amd64.exe" }
+    "ARM64" { $artifactName = "create-sbx-windows-arm64.exe" }
+    default {
+        Write-Error "Unsupported architecture: $arch"
+        exit 1
+    }
+}
 
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 
-$appPath = Join-Path $installDir "create-sbx.cs"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/geofflamrock/create-sbx/main/create-sbx.cs" -OutFile $appPath
+$appPath = Join-Path $installDir "create-sbx.exe"
+Invoke-WebRequest -Uri "https://github.com/geofflamrock/create-sbx/releases/latest/download/$artifactName" -OutFile $appPath
 
-$wrapperPath = Join-Path $binDir "create-sbx.ps1"
-Set-Content -Path $wrapperPath -Value "dotnet run `"$appPath`" @args"
+$binPath = Join-Path $binDir "create-sbx.exe"
+Copy-Item -Path $appPath -Destination $binPath -Force
 
 $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 if ($userPath -notlike "*$binDir*") {
