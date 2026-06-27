@@ -1,165 +1,175 @@
 #!/usr/bin/env -S dotnet run
 #:package Spectre.Console@0.57.0
+#:package System.CommandLine@2.0.9
 
+using System.CommandLine;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 
-var defaultName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
-var name = AnsiConsole.Prompt(
-    new TextPrompt<string>("Enter the [green]sandbox name[/]:")
-        .DefaultValue(defaultName));
+var rootCommand = new RootCommand("An interactive CLI for creating Docker Sandboxes using `sbx`");
+rootCommand.SetAction(async (ParseResult parseResult, CancellationToken ct) =>
+    await RunAsync());
+return await rootCommand.Parse(args).InvokeAsync();
 
-var builtInAgents = new List<AgentOption>
+async Task<int> RunAsync()
 {
-    new("claude", "Claude Code", null),
-    new("codex", "Codex", null),
-    new("copilot", "Copilot", null),
-    new("cursor", "Cursor", null),
-    new("droid", "Droid", null),
-    new("gemini", "Gemini", null),
-    new("kiro", "Kiro", null),
-    new("opencode", "OpenCode", null),
-    new("docker-agent", "Docker Agent", null),
-    new("shell", "Shell", "Agent-less sandbox for manual setup or testing"),
-};
+    var defaultName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
+    var name = AnsiConsole.Prompt(
+        new TextPrompt<string>("Enter the [green]sandbox name[/]:")
+            .DefaultValue(defaultName));
 
-const string CustomAgentSentinel = "__custom__";
-
-var selectedAgent = AnsiConsole.Prompt(
-    new SelectionPrompt<AgentOption>()
-        .Title("Select [green]agent[/]:")
-        .AddChoices([.. builtInAgents, new AgentOption(CustomAgentSentinel, "Custom agent...", null)])
-        .UseConverter(a => a.Id == CustomAgentSentinel
-            ? "[grey]Custom agent...[/]"
-            : a.Description is not null
-                ? $"{a.DisplayName} [grey]({a.Id})[/] [grey]- {a.Description}[/]"
-                : $"{a.DisplayName} [grey]({a.Id})[/]"));
-
-var agentId = selectedAgent.Id == CustomAgentSentinel
-    ? AnsiConsole.Ask<string>("Enter the [green]custom agent identifier[/]:")
-    : selectedAgent.Id;
-
-AnsiConsole.MarkupLine($"Agent: [cyan]{Markup.Escape(agentId)}[/]");
-
-var workDir = AnsiConsole.Prompt(
-    new TextPrompt<string>("Enter the [green]working directory[/]:")
-        .DefaultValue("."));
-
-var workspaceMode = AnsiConsole.Prompt(
-    new SelectionPrompt<WorkspaceMode>()
-        .Title("Select [green]workspace mode[/]:")
-        .AddChoices(
-            new WorkspaceMode("Direct", "Mount the host directory directly into the sandbox", false),
-            new WorkspaceMode("Clone", "Clone the repository into the sandbox", true))
-        .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
-
-AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
-
-var allKitUrls = new List<string>();
-
-if (AnsiConsole.Confirm("Add a kit?"))
-{
-    var recentUrls = LoadRecentUrls();
-
-    do
+    var builtInAgents = new List<AgentOption>
     {
-        var repoUrl = PromptForUrl(recentUrls);
+        new("claude", "Claude Code", null),
+        new("codex", "Codex", null),
+        new("copilot", "Copilot", null),
+        new("cursor", "Cursor", null),
+        new("droid", "Droid", null),
+        new("gemini", "Gemini", null),
+        new("kiro", "Kiro", null),
+        new("opencode", "OpenCode", null),
+        new("docker-agent", "Docker Agent", null),
+        new("shell", "Shell", "Agent-less sandbox for manual setup or testing"),
+    };
 
-        var (owner, repo) = ParseGitHubUrl(repoUrl);
-        if (owner is null || repo is null)
+    const string CustomAgentSentinel = "__custom__";
+
+    var selectedAgent = AnsiConsole.Prompt(
+        new SelectionPrompt<AgentOption>()
+            .Title("Select [green]agent[/]:")
+            .AddChoices([.. builtInAgents, new AgentOption(CustomAgentSentinel, "Custom agent...", null)])
+            .UseConverter(a => a.Id == CustomAgentSentinel
+                ? "[grey]Custom agent...[/]"
+                : a.Description is not null
+                    ? $"{a.DisplayName} [grey]({a.Id})[/] [grey]- {a.Description}[/]"
+                    : $"{a.DisplayName} [grey]({a.Id})[/]"));
+
+    var agentId = selectedAgent.Id == CustomAgentSentinel
+        ? AnsiConsole.Ask<string>("Enter the [green]custom agent identifier[/]:")
+        : selectedAgent.Id;
+
+    AnsiConsole.MarkupLine($"Agent: [cyan]{Markup.Escape(agentId)}[/]");
+
+    var workDir = AnsiConsole.Prompt(
+        new TextPrompt<string>("Enter the [green]working directory[/]:")
+            .DefaultValue("."));
+
+    var workspaceMode = AnsiConsole.Prompt(
+        new SelectionPrompt<WorkspaceMode>()
+            .Title("Select [green]workspace mode[/]:")
+            .AddChoices(
+                new WorkspaceMode("Direct", "Mount the host directory directly into the sandbox", false),
+                new WorkspaceMode("Clone", "Clone the repository into the sandbox", true))
+            .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
+
+    AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
+
+    var allKitUrls = new List<string>();
+
+    if (AnsiConsole.Confirm("Add a kit?"))
+    {
+        var recentUrls = LoadRecentUrls();
+
+        do
         {
-            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-            break;
-        }
+            var repoUrl = PromptForUrl(recentUrls);
 
-        recentUrls = [repoUrl, .. recentUrls.Where(u => u != repoUrl).Take(9)];
-        SaveRecentUrls(recentUrls);
-
-        var branch = AnsiConsole.Prompt(
-            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                .AllowEmpty());
-
-        List<Kit> kits = [];
-        await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .StartAsync("Fetching kits...", async ctx =>
+            var (owner, repo) = ParseGitHubUrl(repoUrl);
+            if (owner is null || repo is null)
             {
-                var cloneDir = await EnsureRepo(owner, repo, branch, ctx);
-                kits = FindKits(cloneDir);
-            });
-
-        if (kits.Count == 0)
-        {
-            AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
-        }
-        else
-        {
-            AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
-
-            var selected = AnsiConsole.Prompt(
-                new MultiSelectionPrompt<Kit>()
-                    .Title("Select the [green]kits[/] to include:")
-                    .NotRequired()
-                    .PageSize(20)
-                    .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
-                    .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
-                    .AddChoices(kits)
-                    .UseConverter(k => k.Description is not null
-                        ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
-                        : k.DisplayName));
-
-            if (selected.Count > 0)
-            {
-                var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
-                AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
-                var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
-                var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
-                foreach (var k in selected)
-                    allKitUrls.Add(k.Directory is not null
-                        ? $"{gitUrl}#dir={k.Directory}{refFragment}"
-                        : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
+                AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+                break;
             }
-        }
-    } while (AnsiConsole.Confirm("Add another kit?"));
-}
 
-var commandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
-if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
-if (workspaceMode.UseClone) commandParts.Add("--clone");
-commandParts.Add(agentId);
-commandParts.Add($"\"{workDir}\"");
-var command = string.Join(" ", commandParts);
+            recentUrls = [repoUrl, .. recentUrls.Where(u => u != repoUrl).Take(9)];
+            SaveRecentUrls(recentUrls);
 
-var sbxArgs = new List<string> { "create", "--name", name };
-foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
-if (workspaceMode.UseClone) sbxArgs.Add("--clone");
-sbxArgs.Add(agentId);
-sbxArgs.Add(workDir);
+            var branch = AnsiConsole.Prompt(
+                new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                    .AllowEmpty());
 
-AnsiConsole.WriteLine();
-AnsiConsole.MarkupLine("[bold]Command:[/]");
-AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
-AnsiConsole.WriteLine();
+            List<Kit> kits = [];
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .StartAsync("Fetching kits...", async ctx =>
+                {
+                    var cloneDir = await EnsureRepo(owner, repo, branch, ctx);
+                    kits = FindKits(cloneDir);
+                });
 
-if (AnsiConsole.Confirm("Create the sandbox?"))
-{
-    AnsiConsole.WriteLine();
-    AnsiConsole.MarkupLine($"Creating sandbox [cyan]{Markup.Escape(name)}[/]...");
-    AnsiConsole.WriteLine();
-    var psi = new ProcessStartInfo("sbx") { UseShellExecute = false };
-    foreach (var arg in sbxArgs)
-        psi.ArgumentList.Add(arg);
-    using var proc = Process.Start(psi)!;
-    await proc.WaitForExitAsync();
-    if (proc.ExitCode != 0)
-    {
-        AnsiConsole.MarkupLine($"[red]sbx exited with code {proc.ExitCode}[/]");
-        return proc.ExitCode;
+            if (kits.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
+
+                var selected = AnsiConsole.Prompt(
+                    new MultiSelectionPrompt<Kit>()
+                        .Title("Select the [green]kits[/] to include:")
+                        .NotRequired()
+                        .PageSize(20)
+                        .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
+                        .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
+                        .AddChoices(kits)
+                        .UseConverter(k => k.Description is not null
+                            ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
+                            : k.DisplayName));
+
+                if (selected.Count > 0)
+                {
+                    var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
+                    AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
+                    var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
+                    var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
+                    foreach (var k in selected)
+                        allKitUrls.Add(k.Directory is not null
+                            ? $"{gitUrl}#dir={k.Directory}{refFragment}"
+                            : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
+                }
+            }
+        } while (AnsiConsole.Confirm("Add another kit?"));
     }
-}
 
-return 0;
+    var commandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
+    if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
+    if (workspaceMode.UseClone) commandParts.Add("--clone");
+    commandParts.Add(agentId);
+    commandParts.Add($"\"{workDir}\"");
+    var command = string.Join(" ", commandParts);
+
+    var sbxArgs = new List<string> { "create", "--name", name };
+    foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
+    if (workspaceMode.UseClone) sbxArgs.Add("--clone");
+    sbxArgs.Add(agentId);
+    sbxArgs.Add(workDir);
+
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine("[bold]Command:[/]");
+    AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
+    AnsiConsole.WriteLine();
+
+    if (AnsiConsole.Confirm("Create the sandbox?"))
+    {
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"Creating sandbox [cyan]{Markup.Escape(name)}[/]...");
+        AnsiConsole.WriteLine();
+        var psi = new ProcessStartInfo("sbx") { UseShellExecute = false };
+        foreach (var arg in sbxArgs)
+            psi.ArgumentList.Add(arg);
+        using var proc = Process.Start(psi)!;
+        await proc.WaitForExitAsync();
+        if (proc.ExitCode != 0)
+        {
+            AnsiConsole.MarkupLine($"[red]sbx exited with code {proc.ExitCode}[/]");
+            return proc.ExitCode;
+        }
+    }
+
+    return 0;
+}
 
 static string PromptForUrl(List<string> recentUrls)
 {

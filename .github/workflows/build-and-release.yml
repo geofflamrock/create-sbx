@@ -37,7 +37,7 @@ jobs:
             artifact-name: create-sbx-windows-amd64.exe
             binary-name: create-sbx.exe
           - rid: win-arm64
-            os: windows-latest
+            os: windows-11-arm
             artifact-name: create-sbx-windows-arm64.exe
             binary-name: create-sbx.exe
 
@@ -49,7 +49,22 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: Publish
-        run: dotnet publish create-sbx.cs -r ${{ matrix.rid }} -o ./output
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            VERSION="0.0.0-pr${{ github.event.pull_request.number }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+            VERSION="0.0.0-${BRANCH//[^a-zA-Z0-9-]/-}"
+          fi
+          dotnet publish create-sbx.cs -r ${{ matrix.rid }} -o ./output -p:Version="$VERSION"
+
+      - name: Verify --version
+        shell: bash
+        run: ./output/${{ matrix.binary-name }} --version
 
       - name: Rename binary
         shell: bash
