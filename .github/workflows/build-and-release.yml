@@ -74,6 +74,6 @@ jobs:
           merge-multiple: true
 
       - name: Upload release assets
-        run: gh release upload ${{ github.ref_name }} ./artifacts/* --repo ${{ github.repository }}
+        run: gh release upload "${{ github.ref_name }}" ./artifacts/* --repo ${{ github.repository }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
