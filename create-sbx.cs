@@ -230,24 +230,23 @@ async Task<int> RunAsync()
     }
 
     var commandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
-    if (template is not null) commandParts.Add($"--template \"{template.ImageName}\"");
+    if (template is not null)
+    {
+        var displayTemplateName = template.Source is TemplateSource.GitRepo or TemplateSource.Local
+            ? "<image-id>"
+            : template.ImageName;
+        commandParts.Add($"--template \"{displayTemplateName}\"");
+    }
     if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
     if (workspaceMode.UseClone) commandParts.Add("--clone");
     commandParts.Add(agentId);
     commandParts.Add($"\"{workDir}\"");
     var command = string.Join(" ", commandParts);
 
-    var sbxArgs = new List<string> { "create", "--name", name };
-    if (template is not null) { sbxArgs.Add("--template"); sbxArgs.Add(template.ImageName); }
-    foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
-    if (workspaceMode.UseClone) sbxArgs.Add("--clone");
-    sbxArgs.Add(agentId);
-    sbxArgs.Add(workDir);
-
     AnsiConsole.WriteLine();
     if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
     {
-        AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/] will be built as [cyan]{Markup.Escape(template.ImageName)}[/] before creating the sandbox.[/]");
+        AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/] will be built before creating the sandbox.[/]");
         AnsiConsole.WriteLine();
     }
     AnsiConsole.MarkupLine("[bold]Command:[/]");
@@ -256,11 +255,15 @@ async Task<int> RunAsync()
 
     if (AnsiConsole.Confirm("Create the sandbox?"))
     {
+        string? effectiveTemplateName = template?.Source == TemplateSource.Registry
+            ? template.ImageName
+            : null;
+
         if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
         {
             try
             {
-                await BuildAndLoadDockerImage(template);
+                effectiveTemplateName = await BuildAndLoadDockerImage(template);
             }
             catch (Exception ex)
             {
@@ -268,6 +271,13 @@ async Task<int> RunAsync()
                 return 1;
             }
         }
+
+        var sbxArgs = new List<string> { "create", "--name", name };
+        if (effectiveTemplateName is not null) { sbxArgs.Add("--template"); sbxArgs.Add(effectiveTemplateName); }
+        foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
+        if (workspaceMode.UseClone) sbxArgs.Add("--clone");
+        sbxArgs.Add(agentId);
+        sbxArgs.Add(workDir);
 
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"Creating sandbox [cyan]{Markup.Escape(name)}[/]...");
@@ -420,11 +430,10 @@ static bool IsDockerfileName(string fileName) =>
     fileName.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase) ||
     fileName.EndsWith(".dockerfile", StringComparison.OrdinalIgnoreCase);
 
-static async Task BuildAndLoadDockerImage(TemplateConfig template)
+static async Task<string> BuildAndLoadDockerImage(TemplateConfig template)
 {
     var imagesDir = Path.Combine(Path.GetTempPath(), "create-sbx", "images");
     Directory.CreateDirectory(imagesDir);
-    var tarPath = Path.Combine(imagesDir, $"{template.ImageName}.tar");
 
     AnsiConsole.MarkupLine($"Building Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/]...");
     await RunProcessInteractive("docker", [
@@ -434,19 +443,57 @@ static async Task BuildAndLoadDockerImage(TemplateConfig template)
         template.DockerContext!
     ]);
 
-    await AnsiConsole.Status()
-        .Spinner(Spinner.Known.Dots)
-        .StartAsync("Saving Docker image...", async ctx =>
-        {
-            await RunProcess("docker", ["save", template.ImageName, "-o", tarPath]);
-        });
+    var imageId = await GetDockerImageId(template.ImageName);
+    var shortHash = imageId.StartsWith("sha256:") ? imageId[7..19] : imageId[..12];
+    var stableImageName = $"create-sbx-{shortHash}";
+    var tarPath = Path.Combine(imagesDir, $"{stableImageName}.tar");
 
-    AnsiConsole.MarkupLine($"[green]Docker image built successfully.[/]");
+    if (!File.Exists(tarPath))
+    {
+        await RunProcess("docker", ["tag", template.ImageName, stableImageName]);
 
-    AnsiConsole.MarkupLine("Loading template into sbx...");
-    await RunProcessInteractive("sbx", ["template", "load", tarPath]);
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Saving Docker image...", async ctx =>
+            {
+                await RunProcess("docker", ["save", stableImageName, "-o", tarPath]);
+            });
 
-    AnsiConsole.MarkupLine($"[green]Template loaded into sbx.[/]");
+        AnsiConsole.MarkupLine($"[green]Docker image built successfully.[/]");
+
+        AnsiConsole.MarkupLine("Loading template into sbx...");
+        await RunProcessInteractive("sbx", ["template", "load", tarPath]);
+        AnsiConsole.MarkupLine($"[green]Template loaded into sbx.[/]");
+    }
+    else
+    {
+        AnsiConsole.MarkupLine($"[green]Docker image built. Using cached template [cyan]{stableImageName}[/].[/]");
+    }
+
+    return stableImageName;
+}
+
+static async Task<string> GetDockerImageId(string imageName)
+{
+    var psi = new ProcessStartInfo("docker")
+    {
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+    };
+    psi.ArgumentList.Add("inspect");
+    psi.ArgumentList.Add("--format={{.Id}}");
+    psi.ArgumentList.Add(imageName);
+
+    using var process = Process.Start(psi)!;
+    var outputTask = process.StandardOutput.ReadToEndAsync();
+    var errorTask = process.StandardError.ReadToEndAsync();
+    await process.WaitForExitAsync();
+
+    if (process.ExitCode != 0)
+        throw new Exception((await errorTask).Trim());
+
+    return (await outputTask).Trim();
 }
 
 static async Task RunProcess(string fileName, string[] args, string? workDir = null)
