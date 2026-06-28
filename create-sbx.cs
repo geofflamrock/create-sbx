@@ -279,6 +279,19 @@ async Task<int> RunAsync()
         sbxArgs.Add(agentId);
         sbxArgs.Add(workDir);
 
+        if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+        {
+            var resolvedCommandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
+            if (effectiveTemplateName is not null) resolvedCommandParts.Add($"--template \"{effectiveTemplateName}\"");
+            if (allKitUrls.Count > 0) resolvedCommandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
+            if (workspaceMode.UseClone) resolvedCommandParts.Add("--clone");
+            resolvedCommandParts.Add(agentId);
+            resolvedCommandParts.Add($"\"{workDir}\"");
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[bold]Command:[/]");
+            AnsiConsole.MarkupLine($"[blue]{Markup.Escape(string.Join(" ", resolvedCommandParts))}[/]");
+        }
+
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"Creating sandbox [cyan]{Markup.Escape(name)}[/]...");
         AnsiConsole.WriteLine();
