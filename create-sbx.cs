@@ -354,7 +354,8 @@ static (string? owner, string? repo) ParseGitHubUrl(string url)
 
 static async Task<string> EnsureRepo(string owner, string repo, string branch, StatusContext ctx, HashSet<string>? fetchedRepos = null)
 {
-    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo);
+    var safeBranch = string.IsNullOrEmpty(branch) ? "HEAD" : branch.Replace('/', '-').Replace('\\', '-');
+    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo, safeBranch);
     var repoKey = $"{owner}/{repo}#{branch}";
 
     if (fetchedRepos?.Contains(repoKey) == true)
