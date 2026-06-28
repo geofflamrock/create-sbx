@@ -135,7 +135,7 @@ async Task<int> RunAsync()
 
                     var absolutePath = Path.Combine(cloneDir, selectedDockerfile);
                     var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
-                    template = new TemplateConfig(TemplateSource.GitRepo, imageName, absolutePath, cloneDir);
+                    template = new TemplateConfig(TemplateSource.GitRepo, imageName, absolutePath, cloneDir, tBranch);
 
                     var branchLabel = string.IsNullOrEmpty(tBranch) ? "" : $" [grey]({Markup.Escape(tBranch)})[/]";
                     AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(selectedDockerfile)}[/] from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}");
@@ -354,8 +354,7 @@ static (string? owner, string? repo) ParseGitHubUrl(string url)
 
 static async Task<string> EnsureRepo(string owner, string repo, string branch, StatusContext ctx, HashSet<string>? fetchedRepos = null)
 {
-    var safeBranch = string.IsNullOrEmpty(branch) ? "HEAD" : branch.Replace('/', '-').Replace('\\', '-');
-    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo, safeBranch);
+    var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo);
     var repoKey = $"{owner}/{repo}#{branch}";
 
     if (fetchedRepos?.Contains(repoKey) == true)
@@ -447,6 +446,14 @@ static async Task<string> BuildAndLoadDockerImage(TemplateConfig template)
 {
     var imagesDir = Path.Combine(Path.GetTempPath(), "create-sbx", "images");
     Directory.CreateDirectory(imagesDir);
+
+    if (template.Source == TemplateSource.GitRepo)
+    {
+        if (string.IsNullOrEmpty(template.Branch))
+            await RunProcess("git", ["checkout", "--detach", "origin/HEAD"], template.DockerContext);
+        else
+            await RunProcess("git", ["checkout", "--detach", $"origin/{template.Branch}"], template.DockerContext);
+    }
 
     AnsiConsole.MarkupLine($"Building Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/]...");
     await RunProcessInteractive("docker", [
@@ -571,5 +578,5 @@ record AgentOption(string Id, string DisplayName, string? Description);
 record Kit(string? Directory, string DisplayName, string? Description);
 record WorkspaceMode(string Name, string Description, bool UseClone);
 record TemplateSourceOption(TemplateSource Source, string DisplayName);
-record TemplateConfig(TemplateSource Source, string ImageName, string? DockerfilePath, string? DockerContext);
+record TemplateConfig(TemplateSource Source, string ImageName, string? DockerfilePath, string? DockerContext, string? Branch = null);
 enum TemplateSource { Registry, GitRepo, Local }
