@@ -75,8 +75,8 @@ async Task<int> RunAsync()
         var templateSources = new[]
         {
             new TemplateSourceOption(TemplateSource.Registry, "Docker image"),
-            new TemplateSourceOption(TemplateSource.GitRepo, "Dockerfile from a Git repo"),
-            new TemplateSourceOption(TemplateSource.Local, "Local Dockerfile"),
+            new TemplateSourceOption(TemplateSource.GitRepo, "Dockerfile - Git repository"),
+            new TemplateSourceOption(TemplateSource.Local, "Dockerfile - local"),
         };
 
         var selectedSource = AnsiConsole.Prompt(
