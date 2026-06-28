@@ -229,19 +229,9 @@ async Task<int> RunAsync()
         } while (AnsiConsole.Confirm("Add another kit?"));
     }
 
-    var commandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
-    if (template is not null)
-    {
-        var displayTemplateName = template.Source is TemplateSource.GitRepo or TemplateSource.Local
-            ? "<image-id>"
-            : template.ImageName;
-        commandParts.Add($"--template \"{displayTemplateName}\"");
-    }
-    if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
-    if (workspaceMode.UseClone) commandParts.Add("--clone");
-    commandParts.Add(agentId);
-    commandParts.Add($"\"{workDir}\"");
-    var command = string.Join(" ", commandParts);
+    var displayTemplateName = template?.Source is TemplateSource.GitRepo or TemplateSource.Local
+        ? "<image-id>"
+        : template?.ImageName;
 
     AnsiConsole.WriteLine();
     if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
@@ -249,8 +239,7 @@ async Task<int> RunAsync()
         AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/] will be built before creating the sandbox.[/]");
         AnsiConsole.WriteLine();
     }
-    AnsiConsole.MarkupLine("[bold]Command:[/]");
-    AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
+    PrintCommand(BuildDisplayCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir));
     AnsiConsole.WriteLine();
 
     if (AnsiConsole.Confirm("Create the sandbox?"))
@@ -281,15 +270,8 @@ async Task<int> RunAsync()
 
         if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
         {
-            var resolvedCommandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
-            if (effectiveTemplateName is not null) resolvedCommandParts.Add($"--template \"{effectiveTemplateName}\"");
-            if (allKitUrls.Count > 0) resolvedCommandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
-            if (workspaceMode.UseClone) resolvedCommandParts.Add("--clone");
-            resolvedCommandParts.Add(agentId);
-            resolvedCommandParts.Add($"\"{workDir}\"");
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[bold]Command:[/]");
-            AnsiConsole.MarkupLine($"[blue]{Markup.Escape(string.Join(" ", resolvedCommandParts))}[/]");
+            PrintCommand(BuildDisplayCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir));
         }
 
         AnsiConsole.WriteLine();
@@ -327,6 +309,23 @@ static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
 
     var url = AnsiConsole.Ask<string>($"Enter the [green]GitHub repository URL[/] for the {purpose}:");
     return url.Trim().TrimEnd('/');
+}
+
+static string BuildDisplayCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir)
+{
+    var parts = new List<string> { "sbx create", $"--name \"{name}\"" };
+    if (templateName is not null) parts.Add($"--template \"{templateName}\"");
+    if (kitUrls.Count > 0) parts.Add(string.Join(" ", kitUrls.Select(u => $"--kit \"{u}\"")));
+    if (workspaceMode.UseClone) parts.Add("--clone");
+    parts.Add(agentId);
+    parts.Add($"\"{workDir}\"");
+    return string.Join(" ", parts);
+}
+
+static void PrintCommand(string command)
+{
+    AnsiConsole.MarkupLine("[bold]Command:[/]");
+    AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
 }
 
 static string GetRecentUrlsPath() =>
