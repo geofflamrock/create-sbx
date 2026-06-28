@@ -70,11 +70,11 @@ async Task<int> RunAsync()
 
     // Template selection
     TemplateConfig? template = null;
-    if (AnsiConsole.Confirm("Use a template?", false))
+    if (AnsiConsole.Confirm("Use a custom template?", false))
     {
         var templateSources = new[]
         {
-            new TemplateSourceOption(TemplateSource.Registry, "Docker image from a registry"),
+            new TemplateSourceOption(TemplateSource.Registry, "Docker image"),
             new TemplateSourceOption(TemplateSource.GitRepo, "Dockerfile from a Git repo"),
             new TemplateSourceOption(TemplateSource.Local, "Local Dockerfile"),
         };
