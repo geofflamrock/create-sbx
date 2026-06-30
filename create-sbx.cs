@@ -453,14 +453,6 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     rows.Add(new Markup("[bold]Create Sandbox[/]"));
     rows.Add(spacer);
     rows.Add(fieldsPanel);
-
-    // Centered edit panel — shown below fields when any field is being edited inline
-    if (edit != null)
-    {
-        rows.Add(spacer);
-        rows.Add(Align.Center(BuildEditPanel(edit)));
-    }
-
     rows.Add(spacer);
     rows.Add(kitsPanel);
     rows.Add(spacer);
@@ -470,7 +462,19 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     rows.Add(spacer);
     rows.Add(commandPanel);
     rows.Add(spacer);
-    rows.Add(new Markup(GetContextualHints(focusedId, edit)));
+    rows.Add(new Markup("  " + GetContextualHints(focusedId, edit)));
+
+    if (edit != null)
+    {
+        var splitTable = new Table()
+            .NoBorder()
+            .HideHeaders()
+            .Expand()
+            .AddColumn(new TableColumn("").Padding(0, 0, 1, 0))
+            .AddColumn(new TableColumn("").Padding(0, 0, 0, 0));
+        splitTable.AddRow(new Rows(rows), BuildEditPanel(edit));
+        return splitTable;
+    }
 
     return new Rows(rows);
 }
@@ -523,7 +527,8 @@ static Panel BuildEditPanel(InlineEditState edit)
         .Header($"[green]{Markup.Escape(title)}[/]")
         .Border(BoxBorder.Rounded)
         .BorderColor(Color.Green)
-        .Padding(2, 0, 2, 0);
+        .Padding(2, 0, 2, 0)
+        .Expand();
 }
 
 static IRenderable BuildDropdown(InlineEditState edit, int minWidth = 40)
@@ -582,8 +587,8 @@ static string GetContextualHints(string focused, InlineEditState? edit)
         "workspace_mode" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}",
         "template" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("d")} {D("default (none)")}",
         "kits" => $"{K("↑/↓")} {D("navigate")}   {K("a")} {D("add kit")}",
-        "create" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("create sandbox")}   {K("a")} {D("add kit")}",
-        "cancel" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("cancel")}   {K("a")} {D("add kit")}",
+        "create" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("create sandbox")}",
+        "cancel" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("cancel")}",
         var s when s.StartsWith("kit:") => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("confirm remove")}   {K("r")} {D("remove")}   {K("a")} {D("add kit")}",
         _ => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}"
     };
