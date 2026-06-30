@@ -364,8 +364,11 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
 static List<string> GetFocusableItems(TuiState state)
 {
     var items = new List<string> { "name", "agent", "workdir", "workspace_mode", "template" };
-    for (var i = 0; i < state.Config.Kits.Count; i++)
-        items.Add($"kit:{i}");
+    if (state.Config.Kits.Count == 0)
+        items.Add("kits");
+    else
+        for (var i = 0; i < state.Config.Kits.Count; i++)
+            items.Add($"kit:{i}");
     items.Add("create");
     items.Add("cancel");
     return items;
@@ -378,15 +381,17 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var focusedId = items[Math.Clamp(state.FocusIndex, 0, items.Count - 1)];
     var edit = state.InlineEdit;
 
+    var isFieldsFocused = focusedId is "name" or "agent" or "workdir" or "workspace_mode" or "template"
+        || edit != null;
+    var isKitsFocused = focusedId == "kits" || focusedId.StartsWith("kit:");
+
     var agentDisplay = config.CustomAgentId is not null
         ? $"Custom: {config.CustomAgentId}"
         : $"{config.SelectedAgent.DisplayName} ({config.SelectedAgent.Id})";
 
-    // Returns the display value for a field — uses edit buffer if currently editing
+    // Left-panel value: shows live selection preview; text buffer shown without cursor (cursor is in edit panel)
     string LiveValue(string id, string value)
     {
-        if (edit?.FieldId == id && edit.TextBuffer != null)
-            return edit.TextBuffer + "▌";
         if (edit?.FieldId == id && edit.OptionLabels != null)
             return edit.OptionLabels[Math.Clamp(edit.CurrentIndex, 0, edit.OptionLabels.Count - 1)];
         return value;
@@ -397,32 +402,82 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         var displayValue = LiveValue(id, rawValue);
         var isFocused = focusedId == id || edit?.FieldId == id;
         if (isFocused)
-            return $"[green] ▶ {Markup.Escape(label.PadRight(20))}  {Markup.Escape(displayValue)}[/]";
-        return $"    {Markup.Escape(label.PadRight(20))}  [white]{Markup.Escape(rawValue)}[/]";
+            return $"[green]▶ {Markup.Escape(label.PadRight(20))}  {Markup.Escape(displayValue)}[/]";
+        return $"  {Markup.Escape(label.PadRight(20))}  [white]{Markup.Escape(rawValue)}[/]";
     }
 
-    // Option rows for inline selection dropdown (indented to value column)
-    IEnumerable<IRenderable> DropdownRows(string fieldId)
+    // Fields panel
+    var fieldRows = new List<IRenderable>
     {
-        if (edit?.FieldId != fieldId || edit.OptionLabels == null) yield break;
+        new Markup(FieldRow("name", "Name", config.Name)),
+        new Markup(""),
+        new Markup(FieldRow("agent", "Agent", agentDisplay)),
+        new Markup(""),
+        new Markup(FieldRow("workdir", "Working Directory", config.WorkingDirectory)),
+        new Markup(""),
+        new Markup(FieldRow("workspace_mode", "Workspace Mode", config.WorkspaceMode.Name)),
+        new Markup(""),
+        new Markup(FieldRow("template", "Template", GetTemplateDisplay(config.Template))),
+    };
 
-        var pageSize = 8;
-        var start = Math.Max(0, edit.CurrentIndex - pageSize / 2);
-        start = Math.Min(start, Math.Max(0, edit.OptionLabels.Count - pageSize));
-        var end = Math.Min(edit.OptionLabels.Count, start + pageSize);
+    var fieldsBorderColor = isFieldsFocused ? Color.Green : Color.Grey;
+    var fieldsPanelHeader = isFieldsFocused ? "[bold green]Create Sandbox[/]" : "[bold]Create Sandbox[/]";
+    var fieldsPanel = new Panel(new Rows(fieldRows))
+        .Header(fieldsPanelHeader)
+        .Border(BoxBorder.Rounded)
+        .BorderColor(fieldsBorderColor)
+        .Padding(1, 0, 1, 0);
 
-        if (start > 0) yield return new Markup("[grey]                             ↑ more[/]");
-        for (var i = start; i < end; i++)
-        {
-            var label = Markup.Escape(edit.OptionLabels[i]);
-            if (i == edit.CurrentIndex)
-                yield return new Markup($"[green]                           ▶ {label}[/]");
-            else
-                yield return new Markup($"                             [grey]{label}[/]");
-        }
-        if (end < edit.OptionLabels.Count) yield return new Markup("[grey]                             ↓ more[/]");
+    // Top section: fields panel alone, or side-by-side with edit panel
+    IRenderable topSection;
+    if (edit != null)
+    {
+        var editPanel = BuildEditPanel(edit);
+        var table = new Table().NoBorder();
+        table.ShowHeaders = false;
+        table.Expand = false;
+        table.AddColumn(new TableColumn("").NoWrap().Padding(new Padding(0, 0, 2, 0)));
+        table.AddColumn(new TableColumn("").NoWrap());
+        table.AddRow(fieldsPanel, editPanel);
+        topSection = table;
+    }
+    else
+    {
+        topSection = fieldsPanel;
     }
 
+    // Kits panel
+    var kitRows = new List<IRenderable>();
+    if (config.Kits.Count == 0)
+    {
+        kitRows.Add(new Markup(""));
+        kitRows.Add(Align.Center(new Markup("[grey]No kits added[/]")));
+        kitRows.Add(new Markup(""));
+    }
+    else
+    {
+        kitRows.Add(new Markup(""));
+        for (var i = 0; i < config.Kits.Count; i++)
+        {
+            var kit = config.Kits[i];
+            var isFocused = focusedId == $"kit:{i}";
+            kitRows.Add(new Markup(isFocused
+                ? $"[green]▶ {Markup.Escape(kit.DisplayName)}[/]"
+                : $"  [white]{Markup.Escape(kit.DisplayName)}[/]"));
+            kitRows.Add(new Markup(""));
+        }
+    }
+
+    var kitsBorderColor = isKitsFocused ? Color.Green : Color.Grey;
+    var kitsPanelHeader = isKitsFocused ? "[green]Kits[/]" : "[grey]Kits[/]";
+    var kitsPanel = new Panel(new Rows(kitRows))
+        .Header(kitsPanelHeader)
+        .Border(BoxBorder.Rounded)
+        .BorderColor(kitsBorderColor)
+        .Padding(1, 0, 1, 0)
+        .Expand();
+
+    // Command
     var agentId = config.CustomAgentId ?? config.SelectedAgent.Id;
     var kitUrls = config.Kits.Select(k => k.Url).ToList();
     var displayTemplateName = config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local
@@ -430,77 +485,82 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         : config.Template?.ImageName;
     var command = BuildDisplayCommand(config.Name, displayTemplateName, kitUrls, config.WorkspaceMode, agentId, config.WorkingDirectory);
 
+    var commandPanel = new Panel(new Markup($"[grey]{Markup.Escape(command)}[/]"))
+        .Border(BoxBorder.Rounded)
+        .BorderColor(Color.Grey)
+        .Padding(1, 0, 1, 0)
+        .Expand();
+
+    // Action buttons (no indent)
+    var createMarkup = focusedId == "create" ? "[green]▶ Create Sandbox[/]" : "[white]Create Sandbox[/]";
+    var cancelMarkup = focusedId == "cancel" ? "[green]▶ Cancel[/]" : "[white]Cancel[/]";
+
     var rows = new List<IRenderable>();
-    rows.Add(new Markup("[bold]Create Sandbox[/]"));
+    rows.Add(topSection);
     rows.Add(new Markup(""));
-
-    rows.Add(new Markup(FieldRow("name", "Name", config.Name)));
-    rows.AddRange(DropdownRows("name"));
+    rows.Add(kitsPanel);
     rows.Add(new Markup(""));
-
-    rows.Add(new Markup(FieldRow("agent", "Agent", agentDisplay)));
-    rows.AddRange(DropdownRows("agent"));
+    rows.Add(new Markup(createMarkup));
     rows.Add(new Markup(""));
-
-    rows.Add(new Markup(FieldRow("workdir", "Working Directory", config.WorkingDirectory)));
-    rows.AddRange(DropdownRows("workdir"));
+    rows.Add(new Markup(cancelMarkup));
     rows.Add(new Markup(""));
-
-    rows.Add(new Markup(FieldRow("workspace_mode", "Workspace Mode", config.WorkspaceMode.Name)));
-    rows.AddRange(DropdownRows("workspace_mode"));
+    rows.Add(commandPanel);
     rows.Add(new Markup(""));
+    rows.Add(new Markup(GetContextualHints(focusedId, edit)));
 
-    rows.Add(new Markup(FieldRow("template", "Template", GetTemplateDisplay(config.Template))));
-    rows.AddRange(DropdownRows("template"));
+    return new Rows(rows);
+}
 
-    // Kits section
-    rows.Add(new Markup(""));
-    rows.Add(new Markup("[grey]  Kits[/]"));
-    rows.Add(new Markup(""));
+static Panel BuildEditPanel(InlineEditState edit)
+{
+    string title;
+    IRenderable content;
 
-    if (config.Kits.Count == 0)
+    if (edit.TextBuffer != null)
     {
-        rows.Add(new Markup("[grey dim]    (no kits added)[/]"));
+        title = edit.FieldId switch
+        {
+            "name" => "Edit Name",
+            "workdir" => "Edit Working Directory",
+            _ => "Edit"
+        };
+        content = new Markup($"[white]{Markup.Escape(edit.TextBuffer)}[/][green]▌[/]");
     }
     else
     {
-        for (var i = 0; i < config.Kits.Count; i++)
+        title = edit.FieldId switch
         {
-            var kit = config.Kits[i];
-            var kitId = $"kit:{i}";
-            var isFocused = focusedId == kitId;
-            var indicator = isFocused ? "[green] ▶ " : "    ";
-            var kitMarkup = isFocused
-                ? $"[green]{Markup.Escape(kit.DisplayName)}[/]"
-                : $"[white]{Markup.Escape(kit.DisplayName)}[/]";
-            rows.Add(new Markup($"{indicator}{kitMarkup}"));
-            rows.Add(new Markup(""));
-        }
+            "agent" => "Select Agent",
+            "workspace_mode" => "Select Workspace Mode",
+            _ => "Select"
+        };
+        content = BuildDropdown(edit);
     }
 
-    // Action buttons
-    rows.Add(new Markup(""));
+    return new Panel(content)
+        .Header($"[green]{Markup.Escape(title)}[/]")
+        .Border(BoxBorder.Rounded)
+        .BorderColor(Color.Green)
+        .Padding(1, 0, 1, 0);
+}
+
+static IRenderable BuildDropdown(InlineEditState edit)
+{
+    var rows = new List<IRenderable>();
+    var pageSize = 8;
+    var start = Math.Max(0, edit.CurrentIndex - pageSize / 2);
+    start = Math.Min(start, Math.Max(0, edit.OptionLabels!.Count - pageSize));
+    var end = Math.Min(edit.OptionLabels.Count, start + pageSize);
+
+    if (start > 0) rows.Add(new Markup("[grey]↑ more[/]"));
+    for (var i = start; i < end; i++)
     {
-        var isFocused = focusedId == "create";
-        rows.Add(new Markup(isFocused
-            ? "[green] ▶ Create Sandbox[/]"
-            : "    [white]Create Sandbox[/]"));
+        var label = Markup.Escape(edit.OptionLabels[i]);
+        rows.Add(i == edit.CurrentIndex
+            ? new Markup($"[green]▶ {label}[/]")
+            : new Markup($"  [grey]{label}[/]"));
     }
-    rows.Add(new Markup(""));
-    {
-        var isFocused = focusedId == "cancel";
-        rows.Add(new Markup(isFocused
-            ? "[green] ▶ Cancel[/]"
-            : "    [white]Cancel[/]"));
-    }
-
-    // Command preview (below buttons, cyan)
-    rows.Add(new Markup(""));
-    rows.Add(new Markup($"    [cyan]{Markup.Escape(command)}[/]"));
-
-    // Contextual hints footer
-    rows.Add(new Markup(""));
-    rows.Add(new Markup(GetContextualHints(focusedId, edit)));
+    if (end < edit.OptionLabels.Count) rows.Add(new Markup("[grey]↓ more[/]"));
 
     return new Rows(rows);
 }
@@ -540,6 +600,7 @@ static string GetContextualHints(string focused, InlineEditState? edit)
         "workdir"        => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("d")} {D("default (.)")}",
         "workspace_mode" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}",
         "template"       => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("d")} {D("default (none)")}",
+        "kits"           => $"{K("↑/↓")} {D("navigate")}   {K("a")} {D("add kit")}",
         "create"         => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("create sandbox")}   {K("a")} {D("add kit")}",
         "cancel"         => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("cancel")}   {K("a")} {D("add kit")}",
         var s when s.StartsWith("kit:") => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("confirm remove")}   {K("r")} {D("remove")}   {K("a")} {D("add kit")}",
@@ -641,6 +702,9 @@ static void HandleEnterKey(string focused, TuiState state)
         }
         case "template":
             state.PendingAction = "edit_template";
+            break;
+        case "kits":
+            state.PendingAction = "add_kit";
             break;
         case "create":
             state.PendingAction = "create";
