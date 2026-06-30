@@ -389,42 +389,33 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         new Markup(FieldRow("template", "Template", GetTemplateDisplay(config.Template))),
     };
 
-    var fieldsBorderColor = isFieldsFocused ? Color.Green : Color.Grey;
-    var fieldsPanelHeader = isFieldsFocused ? "[bold green]Details[/]" : "[bold]Details[/]";
-    var fieldsPanel = new Panel(new Rows(fieldRows))
-        .Header(fieldsPanelHeader)
-        .Border(BoxBorder.Rounded)
-        .BorderColor(fieldsBorderColor)
-        .Padding(1, 1, 1, 1)
-        .Expand();
-
-    // Kits panel
-    var kitRows = new List<IRenderable> { spacer };
     if (config.Kits.Count == 0)
     {
-        kitRows.Add(new Markup("  [grey]No kits added[/]"));
+        var isKitRowFocused = focusedId == "kits" || isKitsEdit;
+        fieldRows.Add(isKitRowFocused
+            ? new Markup($"[green]▶ {"Kits".PadRight(20)}  None[/]")
+            : new Markup($"  {"Kits".PadRight(20)}  [white]None[/]"));
     }
     else
     {
         for (var i = 0; i < config.Kits.Count; i++)
         {
             var kit = config.Kits[i];
-            var isFocused = focusedId == $"kit:{i}";
-            kitRows.Add(new Markup(isFocused
-                ? $"[green]▶ {Markup.Escape(kit.DisplayName)}[/]"
-                : $"  [white]{Markup.Escape(kit.DisplayName)}[/]"));
-            kitRows.Add(spacer);
+            var label = i == 0 ? "Kits" : "";
+            var isKitFocused = focusedId == $"kit:{i}";
+            fieldRows.Add(isKitFocused
+                ? new Markup($"[green]▶ {Markup.Escape(label.PadRight(20))}  {Markup.Escape(kit.DisplayName)}[/]")
+                : new Markup($"  {Markup.Escape(label.PadRight(20))}  [white]{Markup.Escape(kit.DisplayName)}[/]"));
         }
     }
-    kitRows.Add(spacer);
 
-    var kitsBorderColor = isKitsFocused ? Color.Green : Color.Grey;
-    var kitsPanelHeader = isKitsFocused ? "[green]Kits[/]" : "[grey]Kits[/]";
-    var kitsPanel = new Panel(new Rows(kitRows))
-        .Header(kitsPanelHeader)
+    var fieldsBorderColor = (isFieldsFocused || isKitsFocused) ? Color.Green : Color.Grey;
+    var fieldsPanelHeader = (isFieldsFocused || isKitsFocused) ? "[bold green]Details[/]" : "[bold]Details[/]";
+    var fieldsPanel = new Panel(new Rows(fieldRows))
+        .Header(fieldsPanelHeader)
         .Border(BoxBorder.Rounded)
-        .BorderColor(kitsBorderColor)
-        .Padding(1, 0, 1, 0)
+        .BorderColor(fieldsBorderColor)
+        .Padding(1, 1, 1, 1)
         .Expand();
 
     // Preview panel
@@ -452,15 +443,10 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var createMarkup = focusedId == "create" ? "[green]▶ Create Sandbox[/]" : "  [white]Create Sandbox[/]";
     var cancelMarkup = focusedId == "cancel" ? "[green]▶ Exit[/]" : "  [white]Exit[/]";
 
-    // Content row height: fieldsPanel (9) + spacer (1) + kitsPanel (content + 2 borders)
-    var kitsContentRows = config.Kits.Count == 0 ? 3 : 2 * config.Kits.Count + 2;
-    var contentHeight = 9 + 1 + (kitsContentRows + 2);
-
     // Bottom row: 7 single-line rows + preview panel (content + 2 borders)
     var previewPanelHeight = previewRows.Count + 2;
     var bottomHeight = 7 + previewPanelHeight;
 
-    var leftContent = new Rows(new IRenderable[] { fieldsPanel, spacer, kitsPanel });
     var bottomContent = new Rows(new IRenderable[]
     {
         spacer,
@@ -476,22 +462,15 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         .SplitRows(
             new Layout("title").Size(2),
             new Layout("content")
-                // .Size(30)
                 .SplitColumns(
-                    new Layout("left")
-                        .SplitRows(
-                            new Layout("fields"),
-                            new Layout("kits")
-                // .Size(5)
+                    new Layout("left"),
+                    new Layout("right")
                 ),
-                new Layout("right")
-            ),
             new Layout("bottom").Size(bottomHeight)
         );
 
     layout["title"].Update(new Markup("[bold]Create Sandbox[/]"));
-    layout["fields"].Update(fieldsPanel);
-    layout["kits"].Update(kitsPanel);
+    layout["left"].Update(fieldsPanel);
     layout["bottom"].Update(bottomContent);
     var editPanel = edit is not null ? BuildEditPanel(edit) : new Panel(" ");
     layout["right"].Update(editPanel);
