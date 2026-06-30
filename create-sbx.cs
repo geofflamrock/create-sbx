@@ -446,8 +446,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         .Header("[grey]Preview[/]")
         .Border(BoxBorder.Rounded)
         .BorderColor(Color.Grey)
-        .Padding(1, 0, 1, 0)
-        .Expand();
+        .Padding(1, 0, 1, 0);
 
     // Action buttons — 2-space indent when not focused so ▶ prefix doesn't cause text shift
     var createMarkup = focusedId == "create" ? "[green]▶ Create Sandbox[/]" : "  [white]Create Sandbox[/]";
@@ -468,7 +467,6 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         new Markup(createMarkup),
         new Markup(cancelMarkup),
         spacer,
-        spacer,
         commandPanel,
         spacer,
         new Markup("  " + GetContextualHints(focusedId, edit)),
@@ -476,21 +474,31 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
 
     var layout = new Layout("root")
         .SplitRows(
-            new Layout("title").Size(1),
-            new Layout("content").Size(contentHeight).SplitColumns(
-                new Layout("left"),
+            new Layout("title").Size(2),
+            new Layout("content")
+                // .Size(30)
+                .SplitColumns(
+                    new Layout("left")
+                        .SplitRows(
+                            new Layout("fields"),
+                            new Layout("kits")
+                // .Size(5)
+                ),
                 new Layout("right")
             ),
             new Layout("bottom").Size(bottomHeight)
         );
 
     layout["title"].Update(new Markup("[bold]Create Sandbox[/]"));
-    layout["left"].Update(leftContent);
+    layout["fields"].Update(fieldsPanel);
+    layout["kits"].Update(kitsPanel);
     layout["bottom"].Update(bottomContent);
+    var editPanel = edit is not null ? BuildEditPanel(edit) : new Panel(" ");
+    layout["right"].Update(editPanel);
 
     if (edit != null)
     {
-        layout["right"].Update(BuildEditPanel(edit, contentHeight));
+        layout["right"].Visible();
     }
     else
     {
@@ -500,11 +508,11 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     return layout;
 }
 
-static Panel BuildEditPanel(InlineEditState edit, int panelHeight = 0)
+static Panel BuildEditPanel(InlineEditState edit)
 {
     const int MinWidth = 46;
     // Dropdown rows must fit: panelHeight - 2 (borders) - 4 (sp+sp+hints+sp) - 2 (scroll indicators)
-    var pageSize = panelHeight > 8 ? panelHeight - 8 : 8;
+    // var pageSize = panelHeight > 8 ? panelHeight - 8 : 8;
 
     string title;
     IRenderable mainContent;
@@ -514,10 +522,10 @@ static Panel BuildEditPanel(InlineEditState edit, int panelHeight = 0)
         title = edit.FieldId switch
         {
             "template_git_loading" => "Fetching Repository",
-            "template_git_error"   => "Error",
-            "add_kit_loading"      => "Fetching Kits",
-            "add_kit_error"        => "Error",
-            _                      => "Loading"
+            "template_git_error" => "Error",
+            "add_kit_loading" => "Fetching Kits",
+            "add_kit_error" => "Error",
+            _ => "Loading"
         };
         mainContent = new Markup($"[grey]{Markup.Escape(edit.LoadingMessage)}[/]");
     }
@@ -525,16 +533,16 @@ static Panel BuildEditPanel(InlineEditState edit, int panelHeight = 0)
     {
         title = edit.FieldId switch
         {
-            "name"                => "Edit Name",
-            "workdir"             => "Edit Working Directory",
-            "custom_agent_id"     => "Custom Agent ID",
-            "template_registry"   => "Docker Image Name",
-            "template_git_url"    => "Template Repository URL",
+            "name" => "Edit Name",
+            "workdir" => "Edit Working Directory",
+            "custom_agent_id" => "Custom Agent ID",
+            "template_registry" => "Docker Image Name",
+            "template_git_url" => "Template Repository URL",
             "template_git_branch" => "Template Branch (leave blank for default)",
             "template_local_path" => "Dockerfile Path",
-            "add_kit_url"         => "Kit Repository URL",
-            "add_kit_branch"      => "Kit Branch (leave blank for default)",
-            _                     => "Edit"
+            "add_kit_url" => "Kit Repository URL",
+            "add_kit_branch" => "Kit Branch (leave blank for default)",
+            _ => "Edit"
         };
         var buf = edit.TextBuffer;
         var padded = buf.PadRight(Math.Max(MinWidth, buf.Length + 1));
@@ -544,16 +552,16 @@ static Panel BuildEditPanel(InlineEditState edit, int panelHeight = 0)
     {
         title = edit.FieldId switch
         {
-            "agent"                   => "Select Agent",
-            "workspace_mode"          => "Select Workspace Mode",
-            "template_source"         => "Select Template Source",
+            "agent" => "Select Agent",
+            "workspace_mode" => "Select Workspace Mode",
+            "template_source" => "Select Template Source",
             "template_git_url_select" => "Select Template Repository",
             "template_git_dockerfile" => "Select Dockerfile",
-            "add_kit_url_select"      => "Select Repository",
-            "add_kit_multiselect"     => "Select Kits",
-            _                         => "Select"
+            "add_kit_url_select" => "Select Repository",
+            "add_kit_multiselect" => "Select Kits",
+            _ => "Select"
         };
-        mainContent = BuildDropdown(edit, MinWidth, pageSize);
+        mainContent = BuildDropdown(edit, MinWidth);
     }
 
     var sp = new Markup(" ");
@@ -1017,18 +1025,18 @@ static void CommitSelectionEdit(InlineEditState edit, TuiState state)
                     }
                     break;
                 case 3: // Local — inline path input
-                {
-                    var current = state.Config.Template?.Source == TemplateSource.Local
-                        ? state.Config.Template.DockerfilePath ?? "" : "";
-                    state.InlineEdit = new InlineEditState
                     {
-                        FieldId = "template_local_path",
-                        TextBuffer = current,
-                        TextOriginal = current,
-                        PreviousEdit = edit,
-                    };
-                    break;
-                }
+                        var current = state.Config.Template?.Source == TemplateSource.Local
+                            ? state.Config.Template.DockerfilePath ?? "" : "";
+                        state.InlineEdit = new InlineEditState
+                        {
+                            FieldId = "template_local_path",
+                            TextBuffer = current,
+                            TextOriginal = current,
+                            PreviousEdit = edit,
+                        };
+                        break;
+                    }
             }
             break;
 
@@ -1084,41 +1092,41 @@ static void CommitSelectionEdit(InlineEditState edit, TuiState state)
             break;
 
         case "template_git_dockerfile":
-        {
-            var ctxParts = edit.ContextValue!.Split('\n', 2);
-            var cloneDir = ctxParts[0];
-            var branch = ctxParts.Length > 1 ? ctxParts[1] : "";
-            var dockerfile = edit.OptionLabels![edit.CurrentIndex];
-            var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
-            state.Config.Template = new TemplateConfig(TemplateSource.GitRepo, imageName,
-                Path.Combine(cloneDir, dockerfile), cloneDir, branch);
-            state.InlineEdit = null;
-            break;
-        }
+            {
+                var ctxParts = edit.ContextValue!.Split('\n', 2);
+                var cloneDir = ctxParts[0];
+                var branch = ctxParts.Length > 1 ? ctxParts[1] : "";
+                var dockerfile = edit.OptionLabels![edit.CurrentIndex];
+                var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+                state.Config.Template = new TemplateConfig(TemplateSource.GitRepo, imageName,
+                    Path.Combine(cloneDir, dockerfile), cloneDir, branch);
+                state.InlineEdit = null;
+                break;
+            }
 
         case "add_kit_multiselect":
-        {
-            if (state.PendingKits != null && edit.SelectedIndices != null)
             {
-                var gitUrl = $"git+https://github.com/{state.PendingKitOwner}/{state.PendingKitRepo}.git";
-                var refFragment = string.IsNullOrEmpty(state.PendingKitBranch) ? "" : $"&ref={Uri.EscapeDataString(state.PendingKitBranch)}";
-                foreach (var i in edit.SelectedIndices.OrderBy(x => x))
+                if (state.PendingKits != null && edit.SelectedIndices != null)
                 {
-                    if (i >= state.PendingKits.Count) continue;
-                    var k = state.PendingKits[i];
-                    var url = k.Directory is not null
-                        ? $"{gitUrl}#dir={k.Directory}{refFragment}"
-                        : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}";
-                    state.Config.Kits.Add(new KitEntry(url, k.DisplayName));
+                    var gitUrl = $"git+https://github.com/{state.PendingKitOwner}/{state.PendingKitRepo}.git";
+                    var refFragment = string.IsNullOrEmpty(state.PendingKitBranch) ? "" : $"&ref={Uri.EscapeDataString(state.PendingKitBranch)}";
+                    foreach (var i in edit.SelectedIndices.OrderBy(x => x))
+                    {
+                        if (i >= state.PendingKits.Count) continue;
+                        var k = state.PendingKits[i];
+                        var url = k.Directory is not null
+                            ? $"{gitUrl}#dir={k.Directory}{refFragment}"
+                            : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}";
+                        state.Config.Kits.Add(new KitEntry(url, k.DisplayName));
+                    }
                 }
+                state.PendingKits = null;
+                state.PendingKitOwner = null;
+                state.PendingKitRepo = null;
+                state.PendingKitBranch = null;
+                state.InlineEdit = null;
+                break;
             }
-            state.PendingKits = null;
-            state.PendingKitOwner = null;
-            state.PendingKitRepo = null;
-            state.PendingKitBranch = null;
-            state.InlineEdit = null;
-            break;
-        }
     }
 }
 
