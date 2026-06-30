@@ -14,10 +14,7 @@ return await rootCommand.Parse(args).InvokeAsync();
 
 async Task<int> RunAsync()
 {
-    var defaultName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
-    var name = AnsiConsole.Prompt(
-        new TextPrompt<string>("Enter the [green]sandbox name[/]:")
-            .DefaultValue(defaultName));
+    var workspaceFolderName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
 
     var builtInAgents = new List<AgentOption>
     {
@@ -33,265 +30,569 @@ async Task<int> RunAsync()
         new("shell", "Shell", "Agent-less sandbox for manual setup or testing"),
     };
 
-    const string CustomAgentSentinel = "__custom__";
+    var config = new SandboxConfig
+    {
+        Name = workspaceFolderName,
+        SelectedAgent = builtInAgents[0],
+        WorkingDirectory = ".",
+        WorkspaceMode = new WorkspaceMode("Direct", "Mount the host directory directly into the sandbox", false),
+        Template = null,
+        Kits = [],
+    };
 
-    var selectedAgent = AnsiConsole.Prompt(
-        new SelectionPrompt<AgentOption>()
-            .Title("Select [green]agent[/]:")
-            .AddChoices([.. builtInAgents, new AgentOption(CustomAgentSentinel, "Custom agent...", null)])
-            .UseConverter(a => a.Id == CustomAgentSentinel
-                ? "[grey]Custom agent...[/]"
-                : a.Description is not null
-                    ? $"{a.DisplayName} [grey]({a.Id})[/] [grey]- {a.Description}[/]"
-                    : $"{a.DisplayName} [grey]({a.Id})[/]"));
+    var tuiState = new TuiState
+    {
+        Config = config,
+        FocusIndex = 0,
+        RecentUrls = LoadRecentUrls(),
+        FetchedRepos = [],
+    };
 
-    var agentId = selectedAgent.Id == CustomAgentSentinel
-        ? AnsiConsole.Ask<string>("Enter the [green]custom agent identifier[/]:")
-        : selectedAgent.Id;
+    var tuiResult = await RunTuiAsync(tuiState, workspaceFolderName, builtInAgents);
+    if (tuiResult != 0) return 0;
 
-    AnsiConsole.MarkupLine($"Agent: [cyan]{Markup.Escape(agentId)}[/]");
-
-    var workDir = AnsiConsole.Prompt(
-        new TextPrompt<string>("Enter the [green]working directory[/]:")
-            .DefaultValue("."));
-
-    var workspaceMode = AnsiConsole.Prompt(
-        new SelectionPrompt<WorkspaceMode>()
-            .Title("Select [green]workspace mode[/]:")
-            .AddChoices(
-                new WorkspaceMode("Direct", "Mount the host directory directly into the sandbox", false),
-                new WorkspaceMode("Clone", "Clone the repository into the sandbox", true))
-            .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
-
-    AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
-
-    var recentUrls = LoadRecentUrls();
-    var fetchedRepos = new HashSet<string>();
-
-    var template = await PromptForTemplate(recentUrls, fetchedRepos);
-    var allKitUrls = await PromptForKits(recentUrls, fetchedRepos);
-
-    var displayTemplateName = template?.Source is TemplateSource.GitRepo or TemplateSource.Local
+    var agentId = config.CustomAgentId ?? config.SelectedAgent.Id;
+    var kitUrls = config.Kits.Select(k => k.Url).ToList();
+    var displayTemplateName = config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local
         ? "<image-id>"
-        : template?.ImageName;
+        : config.Template?.ImageName;
 
     AnsiConsole.WriteLine();
-    if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+    if (config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
     {
-        AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/] will be built before creating the sandbox.[/]");
+        AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(config.Template.DockerfilePath!)}[/] will be built before creating the sandbox.[/]");
         AnsiConsole.WriteLine();
     }
-    PrintSbxCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir);
+    PrintSbxCommand(config.Name, displayTemplateName, kitUrls, config.WorkspaceMode, agentId, config.WorkingDirectory);
     AnsiConsole.WriteLine();
 
-    if (AnsiConsole.Confirm("Create the sandbox?"))
+    string? effectiveTemplateName = config.Template?.Source == TemplateSource.Registry
+        ? config.Template.ImageName
+        : null;
+
+    if (config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
     {
-        string? effectiveTemplateName = template?.Source == TemplateSource.Registry
-            ? template.ImageName
-            : null;
-
-        if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+        try
         {
-            try
-            {
-                effectiveTemplateName = await BuildAndLoadDockerImage(template);
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[red]Failed to build Docker image: {Markup.Escape(ex.Message)}[/]");
-                return 1;
-            }
+            effectiveTemplateName = await BuildAndLoadDockerImage(config.Template);
         }
-
-        var sbxArgs = new List<string> { "create", "--name", name };
-        if (effectiveTemplateName is not null) { sbxArgs.Add("--template"); sbxArgs.Add(effectiveTemplateName); }
-        foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
-        if (workspaceMode.UseClone) sbxArgs.Add("--clone");
-        sbxArgs.Add(agentId);
-        sbxArgs.Add(workDir);
-
-        if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+        catch (Exception ex)
         {
-            AnsiConsole.WriteLine();
-            PrintSbxCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir);
+            AnsiConsole.MarkupLine($"[red]Failed to build Docker image: {Markup.Escape(ex.Message)}[/]");
+            return 1;
         }
+    }
 
+    var sbxArgs = new List<string> { "create", "--name", config.Name };
+    if (effectiveTemplateName is not null) { sbxArgs.Add("--template"); sbxArgs.Add(effectiveTemplateName); }
+    foreach (var kitUrl in kitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
+    if (config.WorkspaceMode.UseClone) sbxArgs.Add("--clone");
+    sbxArgs.Add(agentId);
+    sbxArgs.Add(config.WorkingDirectory);
+
+    if (config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+    {
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"Creating sandbox [cyan]{Markup.Escape(name)}[/]...");
-        AnsiConsole.WriteLine();
-        var psi = new ProcessStartInfo("sbx") { UseShellExecute = false };
-        foreach (var arg in sbxArgs)
-            psi.ArgumentList.Add(arg);
-        using var proc = Process.Start(psi)!;
-        await proc.WaitForExitAsync();
-        if (proc.ExitCode != 0)
-        {
-            AnsiConsole.MarkupLine($"[red]sbx exited with code {proc.ExitCode}[/]");
-            return proc.ExitCode;
-        }
+        PrintSbxCommand(config.Name, effectiveTemplateName, kitUrls, config.WorkspaceMode, agentId, config.WorkingDirectory);
+    }
+
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine($"Creating sandbox [cyan]{Markup.Escape(config.Name)}[/]...");
+    AnsiConsole.WriteLine();
+    var psi = new ProcessStartInfo("sbx") { UseShellExecute = false };
+    foreach (var arg in sbxArgs)
+        psi.ArgumentList.Add(arg);
+    using var proc = Process.Start(psi)!;
+    await proc.WaitForExitAsync();
+    if (proc.ExitCode != 0)
+    {
+        AnsiConsole.MarkupLine($"[red]sbx exited with code {proc.ExitCode}[/]");
+        return proc.ExitCode;
     }
 
     return 0;
 }
 
-static async Task<TemplateConfig?> PromptForTemplate(List<string> recentUrls, HashSet<string> fetchedRepos)
+async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName, List<AgentOption> builtInAgents)
 {
-    if (!AnsiConsole.Confirm("Use a custom template?", false))
-        return null;
+    const string CustomAgentSentinel = "__custom__";
 
-    var templateSources = new[]
+    var workspaceModes = new List<WorkspaceMode>
     {
-        new TemplateSourceOption(TemplateSource.Registry, "Docker image"),
-        new TemplateSourceOption(TemplateSource.GitRepo, "Dockerfile - Git repository"),
-        new TemplateSourceOption(TemplateSource.Local, "Dockerfile - local"),
+        new("Direct", "Mount the host directory directly into the sandbox", false),
+        new("Clone", "Clone the repository into the sandbox", true),
     };
 
-    var selectedSource = AnsiConsole.Prompt(
-        new SelectionPrompt<TemplateSourceOption>()
-            .Title("Select [green]template source[/]:")
-            .AddChoices(templateSources)
-            .UseConverter(s => s.DisplayName));
-
-    if (selectedSource.Source == TemplateSource.Registry)
+    async Task DispatchActionAsync(string action)
     {
-        var imageName = AnsiConsole.Ask<string>("Enter the [green]image name[/] [grey](e.g. ubuntu:22.04)[/]:");
-        imageName = imageName.Trim();
-        AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(imageName)}[/]");
-        return new TemplateConfig(TemplateSource.Registry, imageName, null, null);
-    }
-
-    if (selectedSource.Source == TemplateSource.GitRepo)
-    {
-        var repoUrl = PromptForUrl(recentUrls, "template");
-        var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
-        if (tOwner is null || tRepo is null)
+        switch (action)
         {
-            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-            return null;
-        }
-
-        AddRecentUrl(recentUrls, repoUrl);
-
-        var tBranch = AnsiConsole.Prompt(
-            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                .AllowEmpty());
-
-        List<string> dockerfiles = [];
-        string cloneDir = "";
-        await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .StartAsync("Fetching repository...", async ctx =>
+            case "edit_name":
             {
-                cloneDir = await EnsureRepo(tOwner, tRepo, tBranch, ctx, fetchedRepos);
-                dockerfiles = FindDockerfiles(cloneDir);
-            });
-
-        if (dockerfiles.Count == 0)
-        {
-            AnsiConsole.MarkupLine("[yellow]No Dockerfiles found in the repository.[/]");
-            return null;
-        }
-
-        AnsiConsole.MarkupLine($"[green]Found {dockerfiles.Count} Dockerfile(s).[/]");
-
-        var selectedDockerfile = AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title("Select a [green]Dockerfile[/]:")
-                .PageSize(20)
-                .AddChoices(dockerfiles));
-
-        var absolutePath = Path.Combine(cloneDir, selectedDockerfile);
-        var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
-        var branchLabel = string.IsNullOrEmpty(tBranch) ? "" : $" [grey]({Markup.Escape(tBranch)})[/]";
-        AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(selectedDockerfile)}[/] from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}");
-        AnsiConsole.MarkupLine("[yellow]Note: The Dockerfile will be built before creating the sandbox.[/]");
-        return new TemplateConfig(TemplateSource.GitRepo, imageName, absolutePath, cloneDir, tBranch);
-    }
-
-    // Local Dockerfile
-    var dockerfilePath = AnsiConsole.Ask<string>("Enter the [green]path to the Dockerfile[/]:");
-    dockerfilePath = Path.GetFullPath(dockerfilePath.Trim());
-
-    if (!File.Exists(dockerfilePath))
-    {
-        AnsiConsole.MarkupLine($"[red]Dockerfile not found: {Markup.Escape(dockerfilePath)}[/]");
-        return null;
-    }
-
-    var context = Path.GetDirectoryName(dockerfilePath)!;
-    var localImageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
-    AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(dockerfilePath)}[/]");
-    AnsiConsole.MarkupLine("[yellow]Note: The Dockerfile will be built before creating the sandbox.[/]");
-    return new TemplateConfig(TemplateSource.Local, localImageName, dockerfilePath, context);
-}
-
-static async Task<List<string>> PromptForKits(List<string> recentUrls, HashSet<string> fetchedRepos)
-{
-    var allKitUrls = new List<string>();
-    if (!AnsiConsole.Confirm("Add a kit?"))
-        return allKitUrls;
-
-    do
-    {
-        var repoUrl = PromptForUrl(recentUrls, "kit");
-
-        var (owner, repo) = ParseGitHubUrl(repoUrl);
-        if (owner is null || repo is null)
-        {
-            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-            break;
-        }
-
-        AddRecentUrl(recentUrls, repoUrl);
-
-        var branch = AnsiConsole.Prompt(
-            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                .AllowEmpty());
-
-        List<Kit> kits = [];
-        await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .StartAsync("Fetching kits...", async ctx =>
+                state.Config.Name = AnsiConsole.Prompt(
+                    new TextPrompt<string>("Enter the [green]sandbox name[/]:")
+                        .DefaultValue(state.Config.Name));
+                break;
+            }
+            case "edit_agent":
             {
-                var cloneDir = await EnsureRepo(owner, repo, branch, ctx, fetchedRepos);
-                kits = FindKits(cloneDir);
-            });
+                var selected = AnsiConsole.Prompt(
+                    new SelectionPrompt<AgentOption>()
+                        .Title("Select [green]agent[/]:")
+                        .AddChoices([.. builtInAgents, new AgentOption(CustomAgentSentinel, "Custom agent...", null)])
+                        .UseConverter(a => a.Id == CustomAgentSentinel
+                            ? "[grey]Custom agent...[/]"
+                            : a.Description is not null
+                                ? $"{a.DisplayName} [grey]({a.Id})[/] [grey]- {a.Description}[/]"
+                                : $"{a.DisplayName} [grey]({a.Id})[/]"));
 
-        if (kits.Count == 0)
-        {
-            AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
-        }
-        else
-        {
-            AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
-
-            var selected = AnsiConsole.Prompt(
-                new MultiSelectionPrompt<Kit>()
-                    .Title("Select the [green]kits[/] to include:")
-                    .NotRequired()
-                    .PageSize(20)
-                    .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
-                    .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
-                    .AddChoices(kits)
-                    .UseConverter(k => k.Description is not null
-                        ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
-                        : k.DisplayName));
-
-            if (selected.Count > 0)
+                if (selected.Id == CustomAgentSentinel)
+                {
+                    var customId = AnsiConsole.Ask<string>("Enter the [green]custom agent identifier[/]:");
+                    state.Config.SelectedAgent = new AgentOption(customId, customId, null);
+                    state.Config.CustomAgentId = customId;
+                }
+                else
+                {
+                    state.Config.SelectedAgent = selected;
+                    state.Config.CustomAgentId = null;
+                }
+                break;
+            }
+            case "edit_workdir":
             {
-                var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
-                AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
-                var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
-                var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
-                foreach (var k in selected)
-                    allKitUrls.Add(k.Directory is not null
-                        ? $"{gitUrl}#dir={k.Directory}{refFragment}"
-                        : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
+                state.Config.WorkingDirectory = AnsiConsole.Prompt(
+                    new TextPrompt<string>("Enter the [green]working directory[/]:")
+                        .DefaultValue(state.Config.WorkingDirectory));
+                break;
+            }
+            case "edit_workspace_mode":
+            {
+                state.Config.WorkspaceMode = AnsiConsole.Prompt(
+                    new SelectionPrompt<WorkspaceMode>()
+                        .Title("Select [green]workspace mode[/]:")
+                        .AddChoices(workspaceModes)
+                        .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
+                break;
+            }
+            case "edit_template":
+            {
+                var templateChoices = new (int Key, string Label)[]
+                {
+                    (-1, "None (use default)"),
+                    ((int)TemplateSource.Registry, "Docker image"),
+                    ((int)TemplateSource.GitRepo, "Dockerfile - Git repository"),
+                    ((int)TemplateSource.Local, "Dockerfile - local"),
+                };
+
+                var currentTitle = state.Config.Template is null
+                    ? "Select [green]template source[/]:"
+                    : $"Current: [cyan]{Markup.Escape(GetTemplateDisplay(state.Config.Template))}[/]. Select new source:";
+
+                var selectedChoice = AnsiConsole.Prompt(
+                    new SelectionPrompt<(int Key, string Label)>()
+                        .Title(currentTitle)
+                        .AddChoices(templateChoices)
+                        .UseConverter(c => c.Label));
+
+                if (selectedChoice.Key == -1)
+                {
+                    state.Config.Template = null;
+                    break;
+                }
+
+                var source = (TemplateSource)selectedChoice.Key;
+
+                if (source == TemplateSource.Registry)
+                {
+                    var imageName = AnsiConsole.Ask<string>("Enter the [green]image name[/] [grey](e.g. ubuntu:22.04)[/]:");
+                    state.Config.Template = new TemplateConfig(TemplateSource.Registry, imageName.Trim(), null, null);
+                    break;
+                }
+
+                if (source == TemplateSource.GitRepo)
+                {
+                    var repoUrl = PromptForUrl(state.RecentUrls, "template");
+                    var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
+                    if (tOwner is null || tRepo is null)
+                    {
+                        AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+                        break;
+                    }
+
+                    AddRecentUrl(state.RecentUrls, repoUrl);
+
+                    var tBranch = AnsiConsole.Prompt(
+                        new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                            .AllowEmpty());
+
+                    List<string> dockerfiles = [];
+                    string cloneDir = "";
+                    await AnsiConsole.Status()
+                        .Spinner(Spinner.Known.Dots)
+                        .StartAsync("Fetching repository...", async ctx =>
+                        {
+                            cloneDir = await EnsureRepo(tOwner, tRepo, tBranch, ctx, state.FetchedRepos);
+                            dockerfiles = FindDockerfiles(cloneDir);
+                        });
+
+                    if (dockerfiles.Count == 0)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]No Dockerfiles found in the repository.[/]");
+                        break;
+                    }
+
+                    var selectedDockerfile = AnsiConsole.Prompt(
+                        new SelectionPrompt<string>()
+                            .Title("Select a [green]Dockerfile[/]:")
+                            .PageSize(20)
+                            .AddChoices(dockerfiles));
+
+                    var absolutePath = Path.Combine(cloneDir, selectedDockerfile);
+                    var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+                    state.Config.Template = new TemplateConfig(TemplateSource.GitRepo, imageName, absolutePath, cloneDir, tBranch);
+                    break;
+                }
+
+                // Local Dockerfile
+                {
+                    var dockerfilePath = AnsiConsole.Ask<string>("Enter the [green]path to the Dockerfile[/]:");
+                    dockerfilePath = Path.GetFullPath(dockerfilePath.Trim());
+
+                    if (!File.Exists(dockerfilePath))
+                    {
+                        AnsiConsole.MarkupLine($"[red]Dockerfile not found: {Markup.Escape(dockerfilePath)}[/]");
+                        break;
+                    }
+
+                    var context = Path.GetDirectoryName(dockerfilePath)!;
+                    var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+                    state.Config.Template = new TemplateConfig(TemplateSource.Local, imageName, dockerfilePath, context);
+                }
+                break;
+            }
+            case "add_kit":
+            {
+                var repoUrl = PromptForUrl(state.RecentUrls, "kit");
+                var (owner, repo) = ParseGitHubUrl(repoUrl);
+                if (owner is null || repo is null)
+                {
+                    AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+                    break;
+                }
+
+                AddRecentUrl(state.RecentUrls, repoUrl);
+
+                var branch = AnsiConsole.Prompt(
+                    new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                        .AllowEmpty());
+
+                List<Kit> kits = [];
+                await AnsiConsole.Status()
+                    .Spinner(Spinner.Known.Dots)
+                    .StartAsync("Fetching kits...", async ctx =>
+                    {
+                        var cloneDir = await EnsureRepo(owner, repo, branch, ctx, state.FetchedRepos);
+                        kits = FindKits(cloneDir);
+                    });
+
+                if (kits.Count == 0)
+                {
+                    AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
+                    break;
+                }
+
+                var selected = AnsiConsole.Prompt(
+                    new MultiSelectionPrompt<Kit>()
+                        .Title("Select the [green]kits[/] to include:")
+                        .NotRequired()
+                        .PageSize(20)
+                        .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
+                        .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
+                        .AddChoices(kits)
+                        .UseConverter(k => k.Description is not null
+                            ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
+                            : k.DisplayName));
+
+                if (selected.Count > 0)
+                {
+                    var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
+                    var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
+                    foreach (var k in selected)
+                    {
+                        var url = k.Directory is not null
+                            ? $"{gitUrl}#dir={k.Directory}{refFragment}"
+                            : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}";
+                        state.Config.Kits.Add(new KitEntry(url, k.DisplayName));
+                    }
+                }
+                break;
+            }
+            default:
+            {
+                if (action.StartsWith("kit:"))
+                {
+                    var idx = int.Parse(action.Split(':')[1]);
+                    if (idx < state.Config.Kits.Count)
+                    {
+                        if (AnsiConsole.Confirm($"Remove kit [cyan]{Markup.Escape(state.Config.Kits[idx].DisplayName)}[/]?"))
+                        {
+                            state.Config.Kits.RemoveAt(idx);
+                            var newItems = GetFocusableItems(state);
+                            state.FocusIndex = Math.Min(state.FocusIndex, newItems.Count - 1);
+                        }
+                    }
+                }
+                else if (action.StartsWith("remove_kit:"))
+                {
+                    var idx = int.Parse(action.Split(':')[1]);
+                    if (idx < state.Config.Kits.Count)
+                    {
+                        state.Config.Kits.RemoveAt(idx);
+                        var newItems = GetFocusableItems(state);
+                        state.FocusIndex = Math.Min(state.FocusIndex, newItems.Count - 1);
+                    }
+                }
+                break;
             }
         }
-    } while (AnsiConsole.Confirm("Add another kit?"));
+    }
 
-    return allKitUrls;
+    while (true)
+    {
+        AnsiConsole.Clear();
+        await AnsiConsole.Live(RenderForm(state, workspaceFolderName))
+            .AutoClear(false)
+            .StartAsync(async ctx =>
+            {
+                ctx.UpdateTarget(RenderForm(state, workspaceFolderName));
+                while (state.PendingAction is null)
+                {
+                    var key = Console.ReadKey(intercept: true);
+                    HandleKeyPress(key, state, workspaceFolderName);
+                    ctx.UpdateTarget(RenderForm(state, workspaceFolderName));
+                }
+            });
+
+        var action = state.PendingAction!;
+        state.PendingAction = null;
+
+        if (action == "cancel") return -1;
+        if (action == "create") return 0;
+
+        await DispatchActionAsync(action);
+    }
+}
+
+static List<string> GetFocusableItems(TuiState state)
+{
+    var items = new List<string> { "name", "agent", "workdir", "workspace_mode", "template" };
+    for (var i = 0; i < state.Config.Kits.Count; i++)
+        items.Add($"kit:{i}");
+    items.Add("add_kit");
+    items.Add("create");
+    items.Add("cancel");
+    return items;
+}
+
+static IRenderable RenderForm(TuiState state, string workspaceFolderName)
+{
+    var config = state.Config;
+    var items = GetFocusableItems(state);
+    var focused = items[Math.Clamp(state.FocusIndex, 0, items.Count - 1)];
+
+    var agentDisplay = config.CustomAgentId is not null
+        ? $"Custom: {config.CustomAgentId}"
+        : $"{config.SelectedAgent.DisplayName} ({config.SelectedAgent.Id})";
+    var agentIsDefault = config.SelectedAgent.Id == "claude" && config.CustomAgentId is null;
+    var templateDisplay = GetTemplateDisplay(config.Template);
+
+    static string ValueMarkup(string value, bool isDefault, bool isFocused)
+    {
+        if (isFocused) return $"[bold white]{Markup.Escape(value)}[/]";
+        if (isDefault) return $"[grey dim][[ {Markup.Escape(value)} ]][/]";
+        return $"[cyan]{Markup.Escape(value)}[/]";
+    }
+
+    string FieldRow(string id, string label, string value, bool isDefault)
+    {
+        var isFocused = focused == id;
+        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
+        var labelStr = $"[grey]{Markup.Escape(label.PadRight(20))}[/]";
+        return $" {indicator} {labelStr}  {ValueMarkup(value, isDefault, isFocused)}";
+    }
+
+    var rows = new List<IRenderable>();
+    rows.Add(new Markup("[bold]Create Sandbox[/]"));
+    rows.Add(new Rule { Style = Style.Parse("grey") });
+    rows.Add(new Markup(FieldRow("name", "Name", config.Name, config.Name == workspaceFolderName)));
+    rows.Add(new Markup(FieldRow("agent", "Agent", agentDisplay, agentIsDefault)));
+    rows.Add(new Markup(FieldRow("workdir", "Working Directory", config.WorkingDirectory, config.WorkingDirectory == ".")));
+    rows.Add(new Markup(FieldRow("workspace_mode", "Workspace Mode", config.WorkspaceMode.Name, !config.WorkspaceMode.UseClone)));
+    rows.Add(new Markup(FieldRow("template", "Template", templateDisplay, config.Template is null)));
+
+    // Kits section
+    rows.Add(new Markup(""));
+    rows.Add(new Markup("[grey]  Kits[/]"));
+    rows.Add(new Rule { Style = Style.Parse("grey dim") });
+
+    if (config.Kits.Count == 0)
+        rows.Add(new Markup("[grey dim]    (no kits added)[/]"));
+
+    for (var i = 0; i < config.Kits.Count; i++)
+    {
+        var kit = config.Kits[i];
+        var kitId = $"kit:{i}";
+        var isFocused = focused == kitId;
+        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
+        var kitMarkup = isFocused
+            ? $"[bold white]× {Markup.Escape(kit.DisplayName)}[/]"
+            : $"[cyan]× {Markup.Escape(kit.DisplayName)}[/]";
+        rows.Add(new Markup($" {indicator} {kitMarkup}"));
+    }
+
+    {
+        var isFocused = focused == "add_kit";
+        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
+        var addKitText = isFocused ? "[bold white on blue] + Add kit [/]" : "[grey]+ Add kit[/]";
+        rows.Add(new Markup($" {indicator} {addKitText}"));
+    }
+
+    // Command preview
+    var agentId = config.CustomAgentId ?? config.SelectedAgent.Id;
+    var kitUrls = config.Kits.Select(k => k.Url).ToList();
+    var displayTemplateName = config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local
+        ? "<image-id>"
+        : config.Template?.ImageName;
+    var command = BuildDisplayCommand(config.Name, displayTemplateName, kitUrls, config.WorkspaceMode, agentId, config.WorkingDirectory);
+
+    rows.Add(new Markup(""));
+    rows.Add(new Panel(new Markup($"[dim]{Markup.Escape(command)}[/]"))
+    {
+        Header = new PanelHeader("[grey]Command[/]"),
+        Border = BoxBorder.Rounded,
+        BorderStyle = Style.Parse("grey"),
+        Padding = new Padding(1, 0),
+    });
+
+    // Action buttons (stacked)
+    rows.Add(new Markup(""));
+    {
+        var isFocused = focused == "create";
+        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
+        var text = isFocused ? "[bold white on blue] Create Sandbox [/]" : "[grey]Create Sandbox[/]";
+        rows.Add(new Markup($" {indicator} {text}"));
+    }
+    {
+        var isFocused = focused == "cancel";
+        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
+        var text = isFocused ? "[bold white on blue] Cancel [/]" : "[grey]Cancel[/]";
+        rows.Add(new Markup($" {indicator} {text}"));
+    }
+
+    // Contextual hints footer
+    rows.Add(new Rule { Style = Style.Parse("grey") });
+    rows.Add(new Markup($"[grey dim]{GetContextualHints(focused)}[/]"));
+
+    return new Rows(rows);
+}
+
+static string GetTemplateDisplay(TemplateConfig? template)
+{
+    if (template is null) return "None";
+    return template.Source switch
+    {
+        TemplateSource.Registry => template.ImageName ?? "Unknown",
+        TemplateSource.GitRepo =>
+            string.Join("/", (template.DockerContext ?? "").Split([Path.DirectorySeparatorChar, '/'], StringSplitOptions.RemoveEmptyEntries).TakeLast(2)) +
+            " > " + (template.DockerContext is not null && template.DockerfilePath is not null
+                ? Path.GetRelativePath(template.DockerContext, template.DockerfilePath)
+                : template.DockerfilePath ?? "Unknown") +
+            (string.IsNullOrEmpty(template.Branch) ? "" : $" ({template.Branch})"),
+        TemplateSource.Local => template.DockerfilePath ?? "Unknown",
+        _ => "Unknown"
+    };
+}
+
+static string GetContextualHints(string focused) => focused switch
+{
+    "name" => "↑/↓ navigate   Enter  enter text   w  workspace folder   d  default",
+    "agent" => "↑/↓ navigate   Enter  select",
+    "workdir" => "↑/↓ navigate   Enter  enter text   d  default (.)",
+    "workspace_mode" => "↑/↓ navigate   Enter  select",
+    "template" => "↑/↓ navigate   Enter  edit   d  default (none)",
+    "add_kit" => "↑/↓ navigate   Enter  add kit",
+    "create" => "↑/↓ navigate   Enter  create sandbox",
+    "cancel" => "↑/↓ navigate   Enter  cancel",
+    var s when s.StartsWith("kit:") => "↑/↓ navigate   Enter  confirm remove   r  remove",
+    _ => "↑/↓ navigate   Enter  select"
+};
+
+static void HandleKeyPress(ConsoleKeyInfo key, TuiState state, string workspaceFolderName)
+{
+    var items = GetFocusableItems(state);
+    var focused = items[Math.Clamp(state.FocusIndex, 0, items.Count - 1)];
+
+    switch (key.Key)
+    {
+        case ConsoleKey.UpArrow:
+            state.FocusIndex = Math.Max(0, state.FocusIndex - 1);
+            break;
+        case ConsoleKey.DownArrow:
+            state.FocusIndex = Math.Min(items.Count - 1, state.FocusIndex + 1);
+            break;
+        case ConsoleKey.Tab:
+            state.FocusIndex = (state.FocusIndex + 1) % items.Count;
+            break;
+        case ConsoleKey.Enter:
+            state.PendingAction = focused switch
+            {
+                "name" => "edit_name",
+                "agent" => "edit_agent",
+                "workdir" => "edit_workdir",
+                "workspace_mode" => "edit_workspace_mode",
+                "template" => "edit_template",
+                "add_kit" => "add_kit",
+                "create" => "create",
+                "cancel" => "cancel",
+                var s when s.StartsWith("kit:") => s,
+                _ => null
+            };
+            break;
+        case ConsoleKey.Delete:
+        case ConsoleKey.Backspace:
+            if (focused.StartsWith("kit:"))
+                state.PendingAction = $"remove_{focused}";
+            break;
+        case ConsoleKey.Escape:
+            state.PendingAction = "cancel";
+            break;
+        default:
+            HandleShortcutKey(key.KeyChar, focused, state, workspaceFolderName);
+            break;
+    }
+}
+
+static void HandleShortcutKey(char ch, string focused, TuiState state, string workspaceFolderName)
+{
+    switch (ch)
+    {
+        case 'w' when focused == "name":
+            state.Config.Name = workspaceFolderName;
+            break;
+        case 'd' when focused == "name":
+            state.Config.Name = workspaceFolderName;
+            break;
+        case 'd' when focused == "workdir":
+            state.Config.WorkingDirectory = ".";
+            break;
+        case 'd' when focused == "template":
+            state.Config.Template = null;
+            break;
+        case 'r' when focused.StartsWith("kit:"):
+            state.PendingAction = $"remove_{focused}";
+            break;
+    }
 }
 
 static void AddRecentUrl(List<string> urls, string url)
@@ -589,6 +890,27 @@ static string? ParseDescription(string yaml)
     return null;
 }
 
+class SandboxConfig
+{
+    public required string Name { get; set; }
+    public required AgentOption SelectedAgent { get; set; }
+    public string? CustomAgentId { get; set; }
+    public required string WorkingDirectory { get; set; }
+    public required WorkspaceMode WorkspaceMode { get; set; }
+    public TemplateConfig? Template { get; set; }
+    public List<KitEntry> Kits { get; set; } = [];
+}
+
+class TuiState
+{
+    public required SandboxConfig Config { get; set; }
+    public int FocusIndex { get; set; }
+    public required List<string> RecentUrls { get; set; }
+    public required HashSet<string> FetchedRepos { get; set; }
+    public string? PendingAction { get; set; }
+}
+
+record KitEntry(string Url, string DisplayName);
 record AgentOption(string Id, string DisplayName, string? Description);
 record Kit(string? Directory, string DisplayName, string? Description);
 record WorkspaceMode(string Name, string Description, bool UseClone);
