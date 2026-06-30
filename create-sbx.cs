@@ -68,166 +68,8 @@ async Task<int> RunAsync()
     var recentUrls = LoadRecentUrls();
     var fetchedRepos = new HashSet<string>();
 
-    // Template selection
-    TemplateConfig? template = null;
-    if (AnsiConsole.Confirm("Use a custom template?", false))
-    {
-        var templateSources = new[]
-        {
-            new TemplateSourceOption(TemplateSource.Registry, "Docker image"),
-            new TemplateSourceOption(TemplateSource.GitRepo, "Dockerfile - Git repository"),
-            new TemplateSourceOption(TemplateSource.Local, "Dockerfile - local"),
-        };
-
-        var selectedSource = AnsiConsole.Prompt(
-            new SelectionPrompt<TemplateSourceOption>()
-                .Title("Select [green]template source[/]:")
-                .AddChoices(templateSources)
-                .UseConverter(s => s.DisplayName));
-
-        if (selectedSource.Source == TemplateSource.Registry)
-        {
-            var imageName = AnsiConsole.Ask<string>("Enter the [green]image name[/] [grey](e.g. ubuntu:22.04)[/]:");
-            imageName = imageName.Trim();
-            template = new TemplateConfig(TemplateSource.Registry, imageName, null, null);
-            AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(imageName)}[/]");
-        }
-        else if (selectedSource.Source == TemplateSource.GitRepo)
-        {
-            var repoUrl = PromptForUrl(recentUrls, "template");
-            var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
-            if (tOwner is null || tRepo is null)
-            {
-                AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-            }
-            else
-            {
-                recentUrls = [repoUrl, .. recentUrls.Where(u => u != repoUrl).Take(9)];
-                SaveRecentUrls(recentUrls);
-
-                var tBranch = AnsiConsole.Prompt(
-                    new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                        .AllowEmpty());
-
-                List<string> dockerfiles = [];
-                string cloneDir = "";
-                await AnsiConsole.Status()
-                    .Spinner(Spinner.Known.Dots)
-                    .StartAsync("Fetching repository...", async ctx =>
-                    {
-                        cloneDir = await EnsureRepo(tOwner, tRepo, tBranch, ctx, fetchedRepos);
-                        dockerfiles = FindDockerfiles(cloneDir);
-                    });
-
-                if (dockerfiles.Count == 0)
-                {
-                    AnsiConsole.MarkupLine("[yellow]No Dockerfiles found in the repository.[/]");
-                }
-                else
-                {
-                    AnsiConsole.MarkupLine($"[green]Found {dockerfiles.Count} Dockerfile(s).[/]");
-
-                    var selectedDockerfile = AnsiConsole.Prompt(
-                        new SelectionPrompt<string>()
-                            .Title("Select a [green]Dockerfile[/]:")
-                            .PageSize(20)
-                            .AddChoices(dockerfiles));
-
-                    var absolutePath = Path.Combine(cloneDir, selectedDockerfile);
-                    var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
-                    template = new TemplateConfig(TemplateSource.GitRepo, imageName, absolutePath, cloneDir, tBranch);
-
-                    var branchLabel = string.IsNullOrEmpty(tBranch) ? "" : $" [grey]({Markup.Escape(tBranch)})[/]";
-                    AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(selectedDockerfile)}[/] from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}");
-                    AnsiConsole.MarkupLine("[yellow]Note: The Dockerfile will be built before creating the sandbox.[/]");
-                }
-            }
-        }
-        else // Local Dockerfile
-        {
-            var dockerfilePath = AnsiConsole.Ask<string>("Enter the [green]path to the Dockerfile[/]:");
-            dockerfilePath = Path.GetFullPath(dockerfilePath.Trim());
-
-            if (!File.Exists(dockerfilePath))
-            {
-                AnsiConsole.MarkupLine($"[red]Dockerfile not found: {Markup.Escape(dockerfilePath)}[/]");
-            }
-            else
-            {
-                var context = Path.GetDirectoryName(dockerfilePath)!;
-                var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
-                template = new TemplateConfig(TemplateSource.Local, imageName, dockerfilePath, context);
-                AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(dockerfilePath)}[/]");
-                AnsiConsole.MarkupLine("[yellow]Note: The Dockerfile will be built before creating the sandbox.[/]");
-            }
-        }
-    }
-
-    // Kit selection
-    var allKitUrls = new List<string>();
-    if (AnsiConsole.Confirm("Add a kit?"))
-    {
-        do
-        {
-            var repoUrl = PromptForUrl(recentUrls, "kit");
-
-            var (owner, repo) = ParseGitHubUrl(repoUrl);
-            if (owner is null || repo is null)
-            {
-                AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-                break;
-            }
-
-            recentUrls = [repoUrl, .. recentUrls.Where(u => u != repoUrl).Take(9)];
-            SaveRecentUrls(recentUrls);
-
-            var branch = AnsiConsole.Prompt(
-                new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                    .AllowEmpty());
-
-            List<Kit> kits = [];
-            await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .StartAsync("Fetching kits...", async ctx =>
-                {
-                    var cloneDir = await EnsureRepo(owner, repo, branch, ctx, fetchedRepos);
-                    kits = FindKits(cloneDir);
-                });
-
-            if (kits.Count == 0)
-            {
-                AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
-            }
-            else
-            {
-                AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
-
-                var selected = AnsiConsole.Prompt(
-                    new MultiSelectionPrompt<Kit>()
-                        .Title("Select the [green]kits[/] to include:")
-                        .NotRequired()
-                        .PageSize(20)
-                        .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
-                        .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
-                        .AddChoices(kits)
-                        .UseConverter(k => k.Description is not null
-                            ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
-                            : k.DisplayName));
-
-                if (selected.Count > 0)
-                {
-                    var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
-                    AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
-                    var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
-                    var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
-                    foreach (var k in selected)
-                        allKitUrls.Add(k.Directory is not null
-                            ? $"{gitUrl}#dir={k.Directory}{refFragment}"
-                            : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
-                }
-            }
-        } while (AnsiConsole.Confirm("Add another kit?"));
-    }
+    var template = await PromptForTemplate(recentUrls, fetchedRepos);
+    var allKitUrls = await PromptForKits(recentUrls, fetchedRepos);
 
     var displayTemplateName = template?.Source is TemplateSource.GitRepo or TemplateSource.Local
         ? "<image-id>"
@@ -239,7 +81,7 @@ async Task<int> RunAsync()
         AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/] will be built before creating the sandbox.[/]");
         AnsiConsole.WriteLine();
     }
-    PrintCommand(BuildDisplayCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir));
+    PrintSbxCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir);
     AnsiConsole.WriteLine();
 
     if (AnsiConsole.Confirm("Create the sandbox?"))
@@ -271,7 +113,7 @@ async Task<int> RunAsync()
         if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
         {
             AnsiConsole.WriteLine();
-            PrintCommand(BuildDisplayCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir));
+            PrintSbxCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir);
         }
 
         AnsiConsole.WriteLine();
@@ -290,6 +132,179 @@ async Task<int> RunAsync()
     }
 
     return 0;
+}
+
+static async Task<TemplateConfig?> PromptForTemplate(List<string> recentUrls, HashSet<string> fetchedRepos)
+{
+    if (!AnsiConsole.Confirm("Use a custom template?", false))
+        return null;
+
+    var templateSources = new[]
+    {
+        new TemplateSourceOption(TemplateSource.Registry, "Docker image"),
+        new TemplateSourceOption(TemplateSource.GitRepo, "Dockerfile - Git repository"),
+        new TemplateSourceOption(TemplateSource.Local, "Dockerfile - local"),
+    };
+
+    var selectedSource = AnsiConsole.Prompt(
+        new SelectionPrompt<TemplateSourceOption>()
+            .Title("Select [green]template source[/]:")
+            .AddChoices(templateSources)
+            .UseConverter(s => s.DisplayName));
+
+    if (selectedSource.Source == TemplateSource.Registry)
+    {
+        var imageName = AnsiConsole.Ask<string>("Enter the [green]image name[/] [grey](e.g. ubuntu:22.04)[/]:");
+        imageName = imageName.Trim();
+        AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(imageName)}[/]");
+        return new TemplateConfig(TemplateSource.Registry, imageName, null, null);
+    }
+
+    if (selectedSource.Source == TemplateSource.GitRepo)
+    {
+        var repoUrl = PromptForUrl(recentUrls, "template");
+        var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
+        if (tOwner is null || tRepo is null)
+        {
+            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+            return null;
+        }
+
+        AddRecentUrl(recentUrls, repoUrl);
+
+        var tBranch = AnsiConsole.Prompt(
+            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                .AllowEmpty());
+
+        List<string> dockerfiles = [];
+        string cloneDir = "";
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Fetching repository...", async ctx =>
+            {
+                cloneDir = await EnsureRepo(tOwner, tRepo, tBranch, ctx, fetchedRepos);
+                dockerfiles = FindDockerfiles(cloneDir);
+            });
+
+        if (dockerfiles.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No Dockerfiles found in the repository.[/]");
+            return null;
+        }
+
+        AnsiConsole.MarkupLine($"[green]Found {dockerfiles.Count} Dockerfile(s).[/]");
+
+        var selectedDockerfile = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Select a [green]Dockerfile[/]:")
+                .PageSize(20)
+                .AddChoices(dockerfiles));
+
+        var absolutePath = Path.Combine(cloneDir, selectedDockerfile);
+        var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+        var branchLabel = string.IsNullOrEmpty(tBranch) ? "" : $" [grey]({Markup.Escape(tBranch)})[/]";
+        AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(selectedDockerfile)}[/] from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}");
+        AnsiConsole.MarkupLine("[yellow]Note: The Dockerfile will be built before creating the sandbox.[/]");
+        return new TemplateConfig(TemplateSource.GitRepo, imageName, absolutePath, cloneDir, tBranch);
+    }
+
+    // Local Dockerfile
+    var dockerfilePath = AnsiConsole.Ask<string>("Enter the [green]path to the Dockerfile[/]:");
+    dockerfilePath = Path.GetFullPath(dockerfilePath.Trim());
+
+    if (!File.Exists(dockerfilePath))
+    {
+        AnsiConsole.MarkupLine($"[red]Dockerfile not found: {Markup.Escape(dockerfilePath)}[/]");
+        return null;
+    }
+
+    var context = Path.GetDirectoryName(dockerfilePath)!;
+    var localImageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+    AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(dockerfilePath)}[/]");
+    AnsiConsole.MarkupLine("[yellow]Note: The Dockerfile will be built before creating the sandbox.[/]");
+    return new TemplateConfig(TemplateSource.Local, localImageName, dockerfilePath, context);
+}
+
+static async Task<List<string>> PromptForKits(List<string> recentUrls, HashSet<string> fetchedRepos)
+{
+    var allKitUrls = new List<string>();
+    if (!AnsiConsole.Confirm("Add a kit?"))
+        return allKitUrls;
+
+    do
+    {
+        var repoUrl = PromptForUrl(recentUrls, "kit");
+
+        var (owner, repo) = ParseGitHubUrl(repoUrl);
+        if (owner is null || repo is null)
+        {
+            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+            break;
+        }
+
+        AddRecentUrl(recentUrls, repoUrl);
+
+        var branch = AnsiConsole.Prompt(
+            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                .AllowEmpty());
+
+        List<Kit> kits = [];
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Fetching kits...", async ctx =>
+            {
+                var cloneDir = await EnsureRepo(owner, repo, branch, ctx, fetchedRepos);
+                kits = FindKits(cloneDir);
+            });
+
+        if (kits.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
+
+            var selected = AnsiConsole.Prompt(
+                new MultiSelectionPrompt<Kit>()
+                    .Title("Select the [green]kits[/] to include:")
+                    .NotRequired()
+                    .PageSize(20)
+                    .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
+                    .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
+                    .AddChoices(kits)
+                    .UseConverter(k => k.Description is not null
+                        ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
+                        : k.DisplayName));
+
+            if (selected.Count > 0)
+            {
+                var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
+                AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
+                var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
+                var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
+                foreach (var k in selected)
+                    allKitUrls.Add(k.Directory is not null
+                        ? $"{gitUrl}#dir={k.Directory}{refFragment}"
+                        : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
+            }
+        }
+    } while (AnsiConsole.Confirm("Add another kit?"));
+
+    return allKitUrls;
+}
+
+static void AddRecentUrl(List<string> urls, string url)
+{
+    urls.Remove(url);
+    urls.Insert(0, url);
+    while (urls.Count > 10) urls.RemoveAt(urls.Count - 1);
+    SaveRecentUrls(urls);
+}
+
+static void PrintSbxCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir)
+{
+    PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir));
 }
 
 static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
