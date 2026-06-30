@@ -453,43 +453,46 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var createMarkup = focusedId == "create" ? "[green]▶ Create Sandbox[/]" : "  [white]Create Sandbox[/]";
     var cancelMarkup = focusedId == "cancel" ? "[green]▶ Exit[/]" : "  [white]Exit[/]";
 
-    var outer = new List<IRenderable>();
-    outer.Add(new Markup("[bold]Create Sandbox[/]"));
-    outer.Add(spacer);
+    var previewPanelHeight = previewRows.Count + 2;
+    var bottomHeight = 8 + previewPanelHeight;
+
+    var leftContent = new Rows(new IRenderable[] { fieldsPanel, spacer, kitsPanel });
+    var bottomContent = new Rows(new IRenderable[]
+    {
+        spacer,
+        new Markup(createMarkup),
+        new Markup(cancelMarkup),
+        spacer,
+        spacer,
+        commandPanel,
+        spacer,
+        new Markup("  " + GetContextualHints(focusedId, edit)),
+    });
+
+    var layout = new Layout("root")
+        .SplitRows(
+            new Layout("title").Size(1),
+            new Layout("content").SplitColumns(
+                new Layout("left"),
+                new Layout("right")
+            ),
+            new Layout("bottom").Size(bottomHeight)
+        );
+
+    layout["title"].Update(new Markup("[bold]Create Sandbox[/]"));
+    layout["left"].Update(leftContent);
+    layout["bottom"].Update(bottomContent);
 
     if (edit != null)
     {
-        // Two-column split: left = Details + Kits, right = edit panel at stable half-width
-        var halfWidth = Math.Max(40, Console.WindowWidth / 2);
-        var leftRows = new List<IRenderable> { fieldsPanel, spacer, kitsPanel };
-        var splitTable = new Table()
-            .NoBorder()
-            .HideHeaders()
-            .Expand()
-            .AddColumn(new TableColumn("").Padding(0, 0, 1, 0))
-            .AddColumn(new TableColumn("").Width(halfWidth).Padding(0, 0, 0, 0));
-        var kitsContentRows = config.Kits.Count == 0 ? 3 : 2 * config.Kits.Count + 2;
-        var targetPanelHeight = 9 + 1 + (kitsContentRows + 2);
-        splitTable.AddRow(new Rows(leftRows), BuildEditPanel(edit, targetPanelHeight - 2));
-        outer.Add(splitTable);
+        layout["right"].Update(BuildEditPanel(edit));
     }
     else
     {
-        outer.Add(fieldsPanel);
-        outer.Add(spacer);
-        outer.Add(kitsPanel);
+        layout["right"].Invisible();
     }
 
-    outer.Add(spacer);
-    outer.Add(new Markup(createMarkup));
-    outer.Add(new Markup(cancelMarkup));
-    outer.Add(spacer);
-    outer.Add(spacer);
-    outer.Add(commandPanel);
-    outer.Add(spacer);
-    outer.Add(new Markup("  " + GetContextualHints(focusedId, edit)));
-
-    return new Rows(outer);
+    return layout;
 }
 
 static Panel BuildEditPanel(InlineEditState edit, int targetContentLines = 0)
