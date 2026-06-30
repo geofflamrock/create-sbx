@@ -65,94 +65,57 @@ async Task<int> RunAsync()
 
     AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
 
-    var allKitUrls = new List<string>();
+    var recentUrls = LoadRecentUrls();
+    var fetchedRepos = new HashSet<string>();
 
-    if (AnsiConsole.Confirm("Add a kit?"))
-    {
-        var recentUrls = LoadRecentUrls();
+    var template = await PromptForTemplate(recentUrls, fetchedRepos);
+    var allKitUrls = await PromptForKits(recentUrls, fetchedRepos);
 
-        do
-        {
-            var repoUrl = PromptForUrl(recentUrls);
-
-            var (owner, repo) = ParseGitHubUrl(repoUrl);
-            if (owner is null || repo is null)
-            {
-                AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-                break;
-            }
-
-            recentUrls = [repoUrl, .. recentUrls.Where(u => u != repoUrl).Take(9)];
-            SaveRecentUrls(recentUrls);
-
-            var branch = AnsiConsole.Prompt(
-                new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                    .AllowEmpty());
-
-            List<Kit> kits = [];
-            await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .StartAsync("Fetching kits...", async ctx =>
-                {
-                    var cloneDir = await EnsureRepo(owner, repo, branch, ctx);
-                    kits = FindKits(cloneDir);
-                });
-
-            if (kits.Count == 0)
-            {
-                AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
-            }
-            else
-            {
-                AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
-
-                var selected = AnsiConsole.Prompt(
-                    new MultiSelectionPrompt<Kit>()
-                        .Title("Select the [green]kits[/] to include:")
-                        .NotRequired()
-                        .PageSize(20)
-                        .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
-                        .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
-                        .AddChoices(kits)
-                        .UseConverter(k => k.Description is not null
-                            ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
-                            : k.DisplayName));
-
-                if (selected.Count > 0)
-                {
-                    var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
-                    AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
-                    var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
-                    var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
-                    foreach (var k in selected)
-                        allKitUrls.Add(k.Directory is not null
-                            ? $"{gitUrl}#dir={k.Directory}{refFragment}"
-                            : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
-                }
-            }
-        } while (AnsiConsole.Confirm("Add another kit?"));
-    }
-
-    var commandParts = new List<string> { "sbx create", $"--name \"{name}\"" };
-    if (allKitUrls.Count > 0) commandParts.Add(string.Join(" ", allKitUrls.Select(u => $"--kit \"{u}\"")));
-    if (workspaceMode.UseClone) commandParts.Add("--clone");
-    commandParts.Add(agentId);
-    commandParts.Add($"\"{workDir}\"");
-    var command = string.Join(" ", commandParts);
-
-    var sbxArgs = new List<string> { "create", "--name", name };
-    foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
-    if (workspaceMode.UseClone) sbxArgs.Add("--clone");
-    sbxArgs.Add(agentId);
-    sbxArgs.Add(workDir);
+    var displayTemplateName = template?.Source is TemplateSource.GitRepo or TemplateSource.Local
+        ? "<image-id>"
+        : template?.ImageName;
 
     AnsiConsole.WriteLine();
-    AnsiConsole.MarkupLine("[bold]Command:[/]");
-    AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
+    if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+    {
+        AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/] will be built before creating the sandbox.[/]");
+        AnsiConsole.WriteLine();
+    }
+    PrintSbxCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir);
     AnsiConsole.WriteLine();
 
     if (AnsiConsole.Confirm("Create the sandbox?"))
     {
+        string? effectiveTemplateName = template?.Source == TemplateSource.Registry
+            ? template.ImageName
+            : null;
+
+        if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+        {
+            try
+            {
+                effectiveTemplateName = await BuildAndLoadDockerImage(template);
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Failed to build Docker image: {Markup.Escape(ex.Message)}[/]");
+                return 1;
+            }
+        }
+
+        var sbxArgs = new List<string> { "create", "--name", name };
+        if (effectiveTemplateName is not null) { sbxArgs.Add("--template"); sbxArgs.Add(effectiveTemplateName); }
+        foreach (var kitUrl in allKitUrls) { sbxArgs.Add("--kit"); sbxArgs.Add(kitUrl); }
+        if (workspaceMode.UseClone) sbxArgs.Add("--clone");
+        sbxArgs.Add(agentId);
+        sbxArgs.Add(workDir);
+
+        if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+        {
+            AnsiConsole.WriteLine();
+            PrintSbxCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir);
+        }
+
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"Creating sandbox [cyan]{Markup.Escape(name)}[/]...");
         AnsiConsole.WriteLine();
@@ -171,23 +134,213 @@ async Task<int> RunAsync()
     return 0;
 }
 
-static string PromptForUrl(List<string> recentUrls)
+static async Task<TemplateConfig?> PromptForTemplate(List<string> recentUrls, HashSet<string> fetchedRepos)
 {
-    const string NewUrlOption = "Enter kit URL";
+    if (!AnsiConsole.Confirm("Use a custom template?", false))
+        return null;
+
+    var templateSources = new[]
+    {
+        new TemplateSourceOption(TemplateSource.Registry, "Docker image"),
+        new TemplateSourceOption(TemplateSource.GitRepo, "Dockerfile - Git repository"),
+        new TemplateSourceOption(TemplateSource.Local, "Dockerfile - local"),
+    };
+
+    var selectedSource = AnsiConsole.Prompt(
+        new SelectionPrompt<TemplateSourceOption>()
+            .Title("Select [green]template source[/]:")
+            .AddChoices(templateSources)
+            .UseConverter(s => s.DisplayName));
+
+    if (selectedSource.Source == TemplateSource.Registry)
+    {
+        var imageName = AnsiConsole.Ask<string>("Enter the [green]image name[/] [grey](e.g. ubuntu:22.04)[/]:");
+        imageName = imageName.Trim();
+        AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(imageName)}[/]");
+        return new TemplateConfig(TemplateSource.Registry, imageName, null, null);
+    }
+
+    if (selectedSource.Source == TemplateSource.GitRepo)
+    {
+        var repoUrl = PromptForUrl(recentUrls, "template");
+        var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
+        if (tOwner is null || tRepo is null)
+        {
+            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+            return null;
+        }
+
+        AddRecentUrl(recentUrls, repoUrl);
+
+        var tBranch = AnsiConsole.Prompt(
+            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                .AllowEmpty());
+
+        List<string> dockerfiles = [];
+        string cloneDir = "";
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Fetching repository...", async ctx =>
+            {
+                cloneDir = await EnsureRepo(tOwner, tRepo, tBranch, ctx, fetchedRepos);
+                dockerfiles = FindDockerfiles(cloneDir);
+            });
+
+        if (dockerfiles.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No Dockerfiles found in the repository.[/]");
+            return null;
+        }
+
+        AnsiConsole.MarkupLine($"[green]Found {dockerfiles.Count} Dockerfile(s).[/]");
+
+        var selectedDockerfile = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Select a [green]Dockerfile[/]:")
+                .PageSize(20)
+                .AddChoices(dockerfiles));
+
+        var absolutePath = Path.Combine(cloneDir, selectedDockerfile);
+        var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+        var branchLabel = string.IsNullOrEmpty(tBranch) ? "" : $" [grey]({Markup.Escape(tBranch)})[/]";
+        AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(selectedDockerfile)}[/] from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}");
+        AnsiConsole.MarkupLine("[yellow]Note: The Dockerfile will be built before creating the sandbox.[/]");
+        return new TemplateConfig(TemplateSource.GitRepo, imageName, absolutePath, cloneDir, tBranch);
+    }
+
+    // Local Dockerfile
+    var dockerfilePath = AnsiConsole.Ask<string>("Enter the [green]path to the Dockerfile[/]:");
+    dockerfilePath = Path.GetFullPath(dockerfilePath.Trim());
+
+    if (!File.Exists(dockerfilePath))
+    {
+        AnsiConsole.MarkupLine($"[red]Dockerfile not found: {Markup.Escape(dockerfilePath)}[/]");
+        return null;
+    }
+
+    var context = Path.GetDirectoryName(dockerfilePath)!;
+    var localImageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+    AnsiConsole.MarkupLine($"Template: [cyan]{Markup.Escape(dockerfilePath)}[/]");
+    AnsiConsole.MarkupLine("[yellow]Note: The Dockerfile will be built before creating the sandbox.[/]");
+    return new TemplateConfig(TemplateSource.Local, localImageName, dockerfilePath, context);
+}
+
+static async Task<List<string>> PromptForKits(List<string> recentUrls, HashSet<string> fetchedRepos)
+{
+    var allKitUrls = new List<string>();
+    if (!AnsiConsole.Confirm("Add a kit?"))
+        return allKitUrls;
+
+    do
+    {
+        var repoUrl = PromptForUrl(recentUrls, "kit");
+
+        var (owner, repo) = ParseGitHubUrl(repoUrl);
+        if (owner is null || repo is null)
+        {
+            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+            break;
+        }
+
+        AddRecentUrl(recentUrls, repoUrl);
+
+        var branch = AnsiConsole.Prompt(
+            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                .AllowEmpty());
+
+        List<Kit> kits = [];
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Fetching kits...", async ctx =>
+            {
+                var cloneDir = await EnsureRepo(owner, repo, branch, ctx, fetchedRepos);
+                kits = FindKits(cloneDir);
+            });
+
+        if (kits.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[green]Found {kits.Count} kit(s).[/]");
+
+            var selected = AnsiConsole.Prompt(
+                new MultiSelectionPrompt<Kit>()
+                    .Title("Select the [green]kits[/] to include:")
+                    .NotRequired()
+                    .PageSize(20)
+                    .MoreChoicesText("[grey](Move up and down to reveal more kits)[/]")
+                    .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
+                    .AddChoices(kits)
+                    .UseConverter(k => k.Description is not null
+                        ? $"{k.DisplayName} [grey]- {Markup.Escape(k.Description)}[/]"
+                        : k.DisplayName));
+
+            if (selected.Count > 0)
+            {
+                var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
+                AnsiConsole.MarkupLine($"Selected kits from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}: {Markup.Escape(string.Join(", ", selected.Select(k => k.DisplayName)))}");
+                var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
+                var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
+                foreach (var k in selected)
+                    allKitUrls.Add(k.Directory is not null
+                        ? $"{gitUrl}#dir={k.Directory}{refFragment}"
+                        : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
+            }
+        }
+    } while (AnsiConsole.Confirm("Add another kit?"));
+
+    return allKitUrls;
+}
+
+static void AddRecentUrl(List<string> urls, string url)
+{
+    urls.Remove(url);
+    urls.Insert(0, url);
+    while (urls.Count > 10) urls.RemoveAt(urls.Count - 1);
+    SaveRecentUrls(urls);
+}
+
+static void PrintSbxCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir)
+{
+    PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir));
+}
+
+static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
+{
+    const string NewUrlOption = "Enter URL";
 
     if (recentUrls.Count > 0)
     {
         var choice = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title("Select a [green]kit repository URL[/]:")
+                .Title($"Select a [green]{purpose} repository URL[/]:")
                 .AddChoices([.. recentUrls, NewUrlOption]));
 
         if (choice != NewUrlOption)
             return choice;
     }
 
-    var url = AnsiConsole.Ask<string>("Enter the [green]GitHub repository URL[/] containing sbx kits:");
+    var url = AnsiConsole.Ask<string>($"Enter the [green]GitHub repository URL[/] for the {purpose}:");
     return url.Trim().TrimEnd('/');
+}
+
+static string BuildDisplayCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir)
+{
+    var parts = new List<string> { "sbx create", $"--name \"{name}\"" };
+    if (templateName is not null) parts.Add($"--template \"{templateName}\"");
+    if (kitUrls.Count > 0) parts.Add(string.Join(" ", kitUrls.Select(u => $"--kit \"{u}\"")));
+    if (workspaceMode.UseClone) parts.Add("--clone");
+    parts.Add(agentId);
+    parts.Add($"\"{workDir}\"");
+    return string.Join(" ", parts);
+}
+
+static void PrintCommand(string command)
+{
+    AnsiConsole.MarkupLine("[bold]Command:[/]");
+    AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
 }
 
 static string GetRecentUrlsPath() =>
@@ -214,13 +367,17 @@ static (string? owner, string? repo) ParseGitHubUrl(string url)
     return (match.Groups["owner"].Value, match.Groups["repo"].Value);
 }
 
-static async Task<string> EnsureRepo(string owner, string repo, string branch, StatusContext ctx)
+static async Task<string> EnsureRepo(string owner, string repo, string branch, StatusContext ctx, HashSet<string>? fetchedRepos = null)
 {
     var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo);
+    var repoKey = $"{owner}/{repo}#{branch}";
+
+    if (fetchedRepos?.Contains(repoKey) == true)
+        return cloneDir;
 
     if (Directory.Exists(Path.Combine(cloneDir, ".git")))
     {
-        ctx.Status("Fetching latest kits...");
+        ctx.Status("Fetching latest changes...");
         if (string.IsNullOrEmpty(branch))
             await RunProcess("git", ["fetch", "origin"], cloneDir);
         else
@@ -238,6 +395,7 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
     else
         await RunProcess("git", ["checkout", "--detach", $"origin/{branch}"], cloneDir);
 
+    fetchedRepos?.Add(repoKey);
     return cloneDir;
 }
 
@@ -270,6 +428,109 @@ static List<Kit> FindKits(string cloneDir)
     return kits;
 }
 
+static List<string> FindDockerfiles(string repoDir)
+{
+    var results = new List<string>();
+    FindDockerfilesRecursive(repoDir, repoDir, results);
+    results.Sort();
+    return results;
+}
+
+static void FindDockerfilesRecursive(string baseDir, string currentDir, List<string> results)
+{
+    foreach (var file in Directory.GetFiles(currentDir))
+    {
+        var fileName = Path.GetFileName(file);
+        if (IsDockerfileName(fileName))
+            results.Add(Path.GetRelativePath(baseDir, file));
+    }
+
+    foreach (var dir in Directory.GetDirectories(currentDir))
+    {
+        if (Path.GetFileName(dir)!.StartsWith('.')) continue;
+        FindDockerfilesRecursive(baseDir, dir, results);
+    }
+}
+
+static bool IsDockerfileName(string fileName) =>
+    fileName.Equals("Dockerfile", StringComparison.OrdinalIgnoreCase) ||
+    fileName.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase) ||
+    fileName.EndsWith(".dockerfile", StringComparison.OrdinalIgnoreCase);
+
+static async Task<string> BuildAndLoadDockerImage(TemplateConfig template)
+{
+    var imagesDir = Path.Combine(Path.GetTempPath(), "create-sbx", "images");
+    Directory.CreateDirectory(imagesDir);
+
+    if (template.Source == TemplateSource.GitRepo)
+    {
+        if (string.IsNullOrEmpty(template.Branch))
+            await RunProcess("git", ["checkout", "--detach", "origin/HEAD"], template.DockerContext);
+        else
+            await RunProcess("git", ["checkout", "--detach", $"origin/{template.Branch}"], template.DockerContext);
+    }
+
+    AnsiConsole.MarkupLine($"Building Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/]...");
+    await RunProcessInteractive("docker", [
+        "build",
+        "-t", template.ImageName,
+        "-f", template.DockerfilePath!,
+        template.DockerContext!
+    ]);
+
+    var imageId = await GetDockerImageId(template.ImageName);
+    var shortHash = imageId.StartsWith("sha256:") ? imageId[7..19] : imageId[..12];
+    var stableImageName = $"create-sbx-{shortHash}";
+    var tarPath = Path.Combine(imagesDir, $"{stableImageName}.tar");
+
+    if (!File.Exists(tarPath))
+    {
+        await RunProcess("docker", ["tag", template.ImageName, stableImageName]);
+
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Saving Docker image...", async ctx =>
+            {
+                await RunProcess("docker", ["save", stableImageName, "-o", tarPath]);
+            });
+
+        AnsiConsole.MarkupLine($"[green]Docker image built successfully.[/]");
+
+        AnsiConsole.MarkupLine("Loading template into sbx...");
+        await RunProcessInteractive("sbx", ["template", "load", tarPath]);
+        AnsiConsole.MarkupLine($"[green]Template loaded into sbx.[/]");
+    }
+    else
+    {
+        AnsiConsole.MarkupLine($"[green]Docker image built. Using cached template [cyan]{stableImageName}[/].[/]");
+    }
+
+    return stableImageName;
+}
+
+static async Task<string> GetDockerImageId(string imageName)
+{
+    var psi = new ProcessStartInfo("docker")
+    {
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+    };
+    psi.ArgumentList.Add("inspect");
+    psi.ArgumentList.Add("--format={{.Id}}");
+    psi.ArgumentList.Add(imageName);
+
+    using var process = Process.Start(psi)!;
+    var outputTask = process.StandardOutput.ReadToEndAsync();
+    var errorTask = process.StandardError.ReadToEndAsync();
+    await process.WaitForExitAsync();
+
+    if (process.ExitCode != 0)
+        throw new Exception((await errorTask).Trim());
+
+    return (await outputTask).Trim();
+}
+
 static async Task RunProcess(string fileName, string[] args, string? workDir = null)
 {
     var psi = new ProcessStartInfo(fileName)
@@ -290,6 +551,21 @@ static async Task RunProcess(string fileName, string[] args, string? workDir = n
 
     if (process.ExitCode != 0)
         throw new Exception((await errorTask).Trim());
+}
+
+static async Task RunProcessInteractive(string fileName, string[] args, string? workDir = null)
+{
+    var psi = new ProcessStartInfo(fileName) { UseShellExecute = false };
+    if (workDir != null)
+        psi.WorkingDirectory = workDir;
+    foreach (var arg in args)
+        psi.ArgumentList.Add(arg);
+
+    using var process = Process.Start(psi)!;
+    await process.WaitForExitAsync();
+
+    if (process.ExitCode != 0)
+        throw new Exception($"{fileName} exited with code {process.ExitCode}");
 }
 
 static string? ParseDisplayName(string yaml)
@@ -316,3 +592,6 @@ static string? ParseDescription(string yaml)
 record AgentOption(string Id, string DisplayName, string? Description);
 record Kit(string? Directory, string DisplayName, string? Description);
 record WorkspaceMode(string Name, string Description, bool UseClone);
+record TemplateSourceOption(TemplateSource Source, string DisplayName);
+record TemplateConfig(TemplateSource Source, string ImageName, string? DockerfilePath, string? DockerContext, string? Branch = null);
+enum TemplateSource { Registry, GitRepo, Local }
