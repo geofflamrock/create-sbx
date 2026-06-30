@@ -208,7 +208,51 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
                 }
             default:
                 {
-                    if (action.StartsWith("add_kit_with_url:"))
+                    if (action.StartsWith("edit_template_git_with_url:"))
+                    {
+                        var repoUrl = action["edit_template_git_with_url:".Length..];
+                        var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
+                        if (tOwner is null || tRepo is null)
+                        {
+                            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+                            break;
+                        }
+
+                        AddRecentUrl(state.RecentUrls, repoUrl);
+
+                        var tBranch = AnsiConsole.Prompt(
+                            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+                                .AllowEmpty());
+
+                        List<string> dockerfiles = [];
+                        string cloneDir = "";
+                        await AnsiConsole.Status()
+                            .Spinner(Spinner.Known.Dots)
+                            .StartAsync("Fetching repository...", async ctx =>
+                            {
+                                cloneDir = await EnsureRepo(tOwner, tRepo, tBranch, ctx, state.FetchedRepos);
+                                dockerfiles = FindDockerfiles(cloneDir);
+                            });
+
+                        if (dockerfiles.Count == 0)
+                        {
+                            AnsiConsole.MarkupLine("[yellow]No Dockerfiles found in the repository.[/]");
+                            break;
+                        }
+
+                        var selectedDockerfile = AnsiConsole.Prompt(
+                            new SelectionPrompt<string>()
+                                .Title("Select a [green]Dockerfile[/]:")
+                                .PageSize(20)
+                                .AddChoices(["← Back", .. dockerfiles]));
+
+                        if (selectedDockerfile == "← Back") break;
+
+                        var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+                        state.Config.Template = new TemplateConfig(TemplateSource.GitRepo, imageName,
+                            Path.Combine(cloneDir, selectedDockerfile), cloneDir, tBranch);
+                    }
+                    else if (action.StartsWith("add_kit_with_url:"))
                     {
                         var repoUrl = action["add_kit_with_url:".Length..];
                         var (owner, repo) = ParseGitHubUrl(repoUrl);
@@ -345,7 +389,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var edit = state.InlineEdit;
 
     var isFieldsEdit = edit?.FieldId is "name" or "agent" or "workdir" or "workspace_mode"
-        or "template_source" or "template_registry";
+        or "template_source" or "template_registry" or "template_git_url_select" or "template_git_url";
     var isKitsEdit = edit?.FieldId is "add_kit_url" or "add_kit_url_select";
 
     var isFieldsFocused = focusedId is "name" or "agent" or "workdir" or "workspace_mode" or "template"
@@ -361,10 +405,9 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     {
         if (edit?.FieldId == id && edit.OptionLabels != null)
             return edit.OptionLabels[Math.Clamp(edit.CurrentIndex, 0, edit.OptionLabels.Count - 1)];
-        // template sub-edits map back to the template field
-        if (id == "template" && edit?.FieldId == "template_source" && edit.OptionLabels != null)
+        if (id == "template" && edit?.FieldId is "template_source" or "template_git_url_select" && edit.OptionLabels != null)
             return edit.OptionLabels[Math.Clamp(edit.CurrentIndex, 0, edit.OptionLabels.Count - 1)];
-        if (id == "template" && edit?.FieldId == "template_registry" && edit.TextBuffer != null)
+        if (id == "template" && edit?.FieldId is "template_registry" or "template_git_url" && edit.TextBuffer != null)
             return edit.TextBuffer;
         return value;
     }
@@ -373,7 +416,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     {
         var displayValue = LiveValue(id, rawValue);
         var isFocused = focusedId == id || edit?.FieldId == id
-            || (id == "template" && edit?.FieldId is "template_source" or "template_registry");
+            || (id == "template" && edit?.FieldId is "template_source" or "template_registry" or "template_git_url_select" or "template_git_url");
         if (isFocused)
             return $"[green]▶ {Markup.Escape(label.PadRight(20))}  {Markup.Escape(displayValue)}[/]";
         return $"  {Markup.Escape(label.PadRight(20))}  [white]{Markup.Escape(rawValue)}[/]";
@@ -449,34 +492,41 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var createMarkup = focusedId == "create" ? "[green]▶ Create Sandbox[/]" : "  [white]Create Sandbox[/]";
     var cancelMarkup = focusedId == "cancel" ? "[green]▶ Exit[/]" : "  [white]Exit[/]";
 
-    var rows = new List<IRenderable>();
-    rows.Add(new Markup("[bold]Create Sandbox[/]"));
-    rows.Add(spacer);
-    rows.Add(fieldsPanel);
-    rows.Add(spacer);
-    rows.Add(kitsPanel);
-    rows.Add(spacer);
-    rows.Add(new Markup(createMarkup));
-    rows.Add(new Markup(cancelMarkup));
-    rows.Add(spacer);
-    rows.Add(spacer);
-    rows.Add(commandPanel);
-    rows.Add(spacer);
-    rows.Add(new Markup("  " + GetContextualHints(focusedId, edit)));
+    var outer = new List<IRenderable>();
+    outer.Add(new Markup("[bold]Create Sandbox[/]"));
+    outer.Add(spacer);
 
     if (edit != null)
     {
+        // Two-column split: left = Details + Kits, right = edit panel at stable half-width
+        var halfWidth = Math.Max(40, Console.WindowWidth / 2);
+        var leftRows = new List<IRenderable> { fieldsPanel, spacer, kitsPanel };
         var splitTable = new Table()
             .NoBorder()
             .HideHeaders()
             .Expand()
             .AddColumn(new TableColumn("").Padding(0, 0, 1, 0))
-            .AddColumn(new TableColumn("").Padding(0, 0, 0, 0));
-        splitTable.AddRow(new Rows(rows), BuildEditPanel(edit));
-        return splitTable;
+            .AddColumn(new TableColumn("").Width(halfWidth).Padding(0, 0, 0, 0));
+        splitTable.AddRow(new Rows(leftRows), BuildEditPanel(edit));
+        outer.Add(splitTable);
+    }
+    else
+    {
+        outer.Add(fieldsPanel);
+        outer.Add(spacer);
+        outer.Add(kitsPanel);
     }
 
-    return new Rows(rows);
+    outer.Add(spacer);
+    outer.Add(new Markup(createMarkup));
+    outer.Add(new Markup(cancelMarkup));
+    outer.Add(spacer);
+    outer.Add(spacer);
+    outer.Add(commandPanel);
+    outer.Add(spacer);
+    outer.Add(new Markup("  " + GetContextualHints(focusedId, edit)));
+
+    return new Rows(outer);
 }
 
 static Panel BuildEditPanel(InlineEditState edit)
@@ -490,11 +540,12 @@ static Panel BuildEditPanel(InlineEditState edit)
     {
         title = edit.FieldId switch
         {
-            "name" => "Edit Name",
-            "workdir" => "Edit Working Directory",
+            "name"              => "Edit Name",
+            "workdir"           => "Edit Working Directory",
             "template_registry" => "Docker Image Name",
-            "add_kit_url" => "Kit Repository URL",
-            _ => "Edit"
+            "template_git_url"  => "Template Repository URL",
+            "add_kit_url"       => "Kit Repository URL",
+            _                   => "Edit"
         };
         var buf = edit.TextBuffer;
         var padded = buf.PadRight(Math.Max(MinWidth, buf.Length + 1));
@@ -504,11 +555,12 @@ static Panel BuildEditPanel(InlineEditState edit)
     {
         title = edit.FieldId switch
         {
-            "agent" => "Select Agent",
-            "workspace_mode" => "Select Workspace Mode",
-            "template_source" => "Select Template Source",
-            "add_kit_url_select" => "Select Repository",
-            _ => "Select"
+            "agent"                   => "Select Agent",
+            "workspace_mode"          => "Select Workspace Mode",
+            "template_source"         => "Select Template Source",
+            "template_git_url_select" => "Select Template Repository",
+            "add_kit_url_select"      => "Select Repository",
+            _                         => "Select"
         };
         mainContent = BuildDropdown(edit, MinWidth);
     }
@@ -771,6 +823,14 @@ static void HandleInlineEditKey(ConsoleKeyInfo key, TuiState state)
                         if (!string.IsNullOrWhiteSpace(edit.TextBuffer))
                             state.Config.Template = new TemplateConfig(TemplateSource.Registry, edit.TextBuffer.Trim(), null, null);
                         break;
+                    case "template_git_url":
+                        if (!string.IsNullOrWhiteSpace(edit.TextBuffer))
+                        {
+                            state.InlineEdit = null;
+                            state.PendingAction = $"edit_template_git_with_url:{edit.TextBuffer.Trim().TrimEnd('/')}";
+                            return;
+                        }
+                        break; // empty = cancel
                     case "add_kit_url":
                         if (!string.IsNullOrWhiteSpace(edit.TextBuffer))
                         {
@@ -783,7 +843,7 @@ static void HandleInlineEditKey(ConsoleKeyInfo key, TuiState state)
                 state.InlineEdit = null;
                 break;
             case ConsoleKey.Escape:
-                state.InlineEdit = null;
+                state.InlineEdit = edit.PreviousEdit;
                 break;
             case ConsoleKey.Backspace:
                 if (edit.TextBuffer.Length > 0)
@@ -809,7 +869,7 @@ static void HandleInlineEditKey(ConsoleKeyInfo key, TuiState state)
                 CommitSelectionEdit(edit, state);
                 break;
             case ConsoleKey.Escape:
-                state.InlineEdit = null;
+                state.InlineEdit = edit.PreviousEdit;
                 break;
         }
     }
@@ -858,14 +918,52 @@ static void CommitSelectionEdit(InlineEditState edit, TuiState state)
                         };
                         break;
                     }
-                case 2: // Git repo — break out
-                    state.InlineEdit = null;
-                    state.PendingAction = "edit_template_git";
+                case 2: // Git repo — stay in panel for URL entry
+                    if (state.RecentUrls.Count > 0)
+                    {
+                        state.InlineEdit = new InlineEditState
+                        {
+                            FieldId = "template_git_url_select",
+                            OptionLabels = [.. state.RecentUrls, "Enter new URL..."],
+                            CurrentIndex = 0,
+                            OriginalIndex = 0,
+                            PreviousEdit = edit,
+                        };
+                    }
+                    else
+                    {
+                        state.InlineEdit = new InlineEditState
+                        {
+                            FieldId = "template_git_url",
+                            TextBuffer = "",
+                            TextOriginal = "",
+                            PreviousEdit = edit,
+                        };
+                    }
                     break;
                 case 3: // Local — break out
                     state.InlineEdit = null;
                     state.PendingAction = "edit_template_local";
                     break;
+            }
+            break;
+
+        case "template_git_url_select":
+            if (edit.CurrentIndex >= edit.OptionLabels!.Count - 1)
+            {
+                state.InlineEdit = new InlineEditState
+                {
+                    FieldId = "template_git_url",
+                    TextBuffer = "",
+                    TextOriginal = "",
+                    PreviousEdit = edit,
+                };
+            }
+            else
+            {
+                var url = edit.OptionLabels[edit.CurrentIndex].Trim().TrimEnd('/');
+                state.InlineEdit = null;
+                state.PendingAction = $"edit_template_git_with_url:{url}";
             }
             break;
 
@@ -878,6 +976,7 @@ static void CommitSelectionEdit(InlineEditState edit, TuiState state)
                     FieldId = "add_kit_url",
                     TextBuffer = "",
                     TextOriginal = "",
+                    PreviousEdit = edit,
                 };
             }
             else
@@ -1243,6 +1342,9 @@ class InlineEditState
     public List<string>? OptionLabels { get; set; }
     public int CurrentIndex { get; set; }
     public int OriginalIndex { get; set; }
+
+    // Set when this edit was entered from another — Esc restores it instead of closing entirely
+    public InlineEditState? PreviousEdit { get; set; }
 }
 
 record KitEntry(string Url, string DisplayName);
