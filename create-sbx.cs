@@ -453,8 +453,13 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var createMarkup = focusedId == "create" ? "[green]▶ Create Sandbox[/]" : "  [white]Create Sandbox[/]";
     var cancelMarkup = focusedId == "cancel" ? "[green]▶ Exit[/]" : "  [white]Exit[/]";
 
+    // Content row height: fieldsPanel (9) + spacer (1) + kitsPanel (content + 2 borders)
+    var kitsContentRows = config.Kits.Count == 0 ? 3 : 2 * config.Kits.Count + 2;
+    var contentHeight = 9 + 1 + (kitsContentRows + 2);
+
+    // Bottom row: 7 single-line rows + preview panel (content + 2 borders)
     var previewPanelHeight = previewRows.Count + 2;
-    var bottomHeight = 8 + previewPanelHeight;
+    var bottomHeight = 7 + previewPanelHeight;
 
     var leftContent = new Rows(new IRenderable[] { fieldsPanel, spacer, kitsPanel });
     var bottomContent = new Rows(new IRenderable[]
@@ -472,7 +477,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var layout = new Layout("root")
         .SplitRows(
             new Layout("title").Size(1),
-            new Layout("content").SplitColumns(
+            new Layout("content").Size(contentHeight).SplitColumns(
                 new Layout("left"),
                 new Layout("right")
             ),
@@ -485,7 +490,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
 
     if (edit != null)
     {
-        layout["right"].Update(BuildEditPanel(edit));
+        layout["right"].Update(BuildEditPanel(edit, contentHeight));
     }
     else
     {
@@ -495,9 +500,11 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     return layout;
 }
 
-static Panel BuildEditPanel(InlineEditState edit, int targetContentLines = 0)
+static Panel BuildEditPanel(InlineEditState edit, int panelHeight = 0)
 {
     const int MinWidth = 46;
+    // Dropdown rows must fit: panelHeight - 2 (borders) - 4 (sp+sp+hints+sp) - 2 (scroll indicators)
+    var pageSize = panelHeight > 8 ? panelHeight - 8 : 8;
 
     string title;
     IRenderable mainContent;
@@ -546,7 +553,7 @@ static Panel BuildEditPanel(InlineEditState edit, int targetContentLines = 0)
             "add_kit_multiselect"     => "Select Kits",
             _                         => "Select"
         };
-        mainContent = BuildDropdown(edit, MinWidth);
+        mainContent = BuildDropdown(edit, MinWidth, pageSize);
     }
 
     var sp = new Markup(" ");
@@ -564,9 +571,6 @@ static Panel BuildEditPanel(InlineEditState edit, int targetContentLines = 0)
         sp,
     };
 
-    while (targetContentLines > 0 && panelRows.Count < targetContentLines)
-        panelRows.Add(new Markup(" "));
-
     return new Panel(new Rows(panelRows))
         .Header($"[green]{Markup.Escape(title)}[/]")
         .Border(BoxBorder.Rounded)
@@ -575,10 +579,9 @@ static Panel BuildEditPanel(InlineEditState edit, int targetContentLines = 0)
         .Expand();
 }
 
-static IRenderable BuildDropdown(InlineEditState edit, int minWidth = 40)
+static IRenderable BuildDropdown(InlineEditState edit, int minWidth = 40, int pageSize = 8)
 {
     var rows = new List<IRenderable>();
-    var pageSize = 8;
     var start = Math.Max(0, edit.CurrentIndex - pageSize / 2);
     start = Math.Min(start, Math.Max(0, edit.OptionLabels!.Count - pageSize));
     var end = Math.Min(edit.OptionLabels.Count, start + pageSize);
