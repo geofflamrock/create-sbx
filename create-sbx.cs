@@ -142,51 +142,6 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
                     }
                     break;
                 }
-            case "edit_template_git":
-                {
-                    var repoUrl = PromptForUrl(state.RecentUrls, "template");
-                    var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
-                    if (tOwner is null || tRepo is null)
-                    {
-                        AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
-                        break;
-                    }
-
-                    AddRecentUrl(state.RecentUrls, repoUrl);
-
-                    var tBranch = AnsiConsole.Prompt(
-                        new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                            .AllowEmpty());
-
-                    List<string> dockerfiles = [];
-                    string cloneDir = "";
-                    await AnsiConsole.Status()
-                        .Spinner(Spinner.Known.Dots)
-                        .StartAsync("Fetching repository...", async ctx =>
-                        {
-                            cloneDir = await EnsureRepo(tOwner, tRepo, tBranch, ctx, state.FetchedRepos);
-                            dockerfiles = FindDockerfiles(cloneDir);
-                        });
-
-                    if (dockerfiles.Count == 0)
-                    {
-                        AnsiConsole.MarkupLine("[yellow]No Dockerfiles found in the repository.[/]");
-                        break;
-                    }
-
-                    var selectedDockerfile = AnsiConsole.Prompt(
-                        new SelectionPrompt<string>()
-                            .Title("Select a [green]Dockerfile[/]:")
-                            .PageSize(20)
-                            .AddChoices(["← Back", .. dockerfiles]));
-
-                    if (selectedDockerfile == "← Back") break;
-
-                    var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
-                    state.Config.Template = new TemplateConfig(TemplateSource.GitRepo, imageName,
-                        Path.Combine(cloneDir, selectedDockerfile), cloneDir, tBranch);
-                    break;
-                }
             case "edit_template_local":
                 {
                     var dockerfilePath = AnsiConsole.Prompt(
@@ -208,82 +163,146 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
                 }
             default:
                 {
-                    if (action.StartsWith("edit_template_git:"))
+                    if (action.StartsWith("fetch_template_git:"))
                     {
-                        var body = action["edit_template_git:".Length..];
+                        var body = action["fetch_template_git:".Length..];
                         var sep = body.IndexOf('\n');
                         var repoUrl = sep >= 0 ? body[..sep] : body;
                         var tBranch = sep >= 0 ? body[(sep + 1)..] : "";
                         var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
                         if (tOwner is null || tRepo is null)
                         {
-                            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+                            state.InlineEdit = new InlineEditState
+                            {
+                                FieldId = "template_git_error",
+                                LoadingMessage = "Invalid GitHub repository URL. Expected: https://github.com/owner/repo",
+                            };
                             break;
                         }
 
                         AddRecentUrl(state.RecentUrls, repoUrl);
 
-                        List<string> dockerfiles = [];
-                        string cloneDir = "";
-                        await AnsiConsole.Status()
-                            .Spinner(Spinner.Known.Dots)
-                            .StartAsync("Fetching repository...", async ctx =>
-                            {
-                                cloneDir = await EnsureRepo(tOwner, tRepo, tBranch, ctx, state.FetchedRepos);
-                                dockerfiles = FindDockerfiles(cloneDir);
-                            });
-
-                        if (dockerfiles.Count == 0)
+                        state.InlineEdit = new InlineEditState
                         {
-                            AnsiConsole.MarkupLine("[yellow]No Dockerfiles found in the repository.[/]");
+                            FieldId = "template_git_loading",
+                            LoadingMessage = "Fetching repository...",
+                        };
+                        AnsiConsole.Clear();
+                        AnsiConsole.Write(RenderForm(state, workspaceFolderName));
+
+                        string tCloneDir;
+                        List<string> dockerfiles;
+                        try
+                        {
+                            tCloneDir = await EnsureRepo(tOwner, tRepo, tBranch, null, state.FetchedRepos);
+                            dockerfiles = FindDockerfiles(tCloneDir);
+                        }
+                        catch (Exception ex)
+                        {
+                            state.InlineEdit = new InlineEditState
+                            {
+                                FieldId = "template_git_error",
+                                LoadingMessage = $"Failed to fetch repository: {ex.Message}",
+                            };
                             break;
                         }
 
-                        var selectedDockerfile = AnsiConsole.Prompt(
-                            new SelectionPrompt<string>()
-                                .Title("Select a [green]Dockerfile[/]:")
-                                .PageSize(20)
-                                .AddChoices(["← Back", .. dockerfiles]));
+                        if (dockerfiles.Count == 0)
+                        {
+                            state.InlineEdit = new InlineEditState
+                            {
+                                FieldId = "template_git_error",
+                                LoadingMessage = "No Dockerfiles found in the repository.",
+                            };
+                            break;
+                        }
 
-                        if (selectedDockerfile == "← Back") break;
-
-                        var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
-                        state.Config.Template = new TemplateConfig(TemplateSource.GitRepo, imageName,
-                            Path.Combine(cloneDir, selectedDockerfile), cloneDir, tBranch);
+                        state.InlineEdit = new InlineEditState
+                        {
+                            FieldId = "template_git_dockerfile",
+                            OptionLabels = [.. dockerfiles],
+                            CurrentIndex = 0,
+                            OriginalIndex = 0,
+                            ContextValue = $"{tCloneDir}\n{tBranch}",
+                        };
                     }
-                    else if (action.StartsWith("add_kit:"))
+                    else if (action.StartsWith("fetch_kit:"))
                     {
-                        var body = action["add_kit:".Length..];
+                        var body = action["fetch_kit:".Length..];
                         var sep = body.IndexOf('\n');
                         var repoUrl = sep >= 0 ? body[..sep] : body;
                         var branch = sep >= 0 ? body[(sep + 1)..] : "";
                         var (owner, repo) = ParseGitHubUrl(repoUrl);
                         if (owner is null || repo is null)
                         {
-                            AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+                            state.InlineEdit = new InlineEditState
+                            {
+                                FieldId = "add_kit_error",
+                                LoadingMessage = "Invalid GitHub repository URL. Expected: https://github.com/owner/repo",
+                            };
                             break;
                         }
 
                         AddRecentUrl(state.RecentUrls, repoUrl);
 
-                        List<Kit> kits = [];
-                        await AnsiConsole.Status()
-                            .Spinner(Spinner.Known.Dots)
-                            .StartAsync("Fetching kits...", async ctx =>
-                            {
-                                var cloneDir = await EnsureRepo(owner, repo, branch, ctx, state.FetchedRepos);
-                                kits = FindKits(cloneDir);
-                            });
-
-                        if (kits.Count == 0)
+                        state.InlineEdit = new InlineEditState
                         {
-                            AnsiConsole.MarkupLine("[yellow]No kits found in the repository.[/]");
+                            FieldId = "add_kit_loading",
+                            LoadingMessage = "Fetching kits...",
+                        };
+                        AnsiConsole.Clear();
+                        AnsiConsole.Write(RenderForm(state, workspaceFolderName));
+                        state.InlineEdit = null;
+
+                        List<Kit> kits;
+                        try
+                        {
+                            var cloneDir = await EnsureRepo(owner, repo, branch, null, state.FetchedRepos);
+                            kits = FindKits(cloneDir);
+                        }
+                        catch (Exception ex)
+                        {
+                            state.InlineEdit = new InlineEditState
+                            {
+                                FieldId = "add_kit_error",
+                                LoadingMessage = $"Failed to fetch repository: {ex.Message}",
+                            };
                             break;
                         }
 
+                        if (kits.Count == 0)
+                        {
+                            state.InlineEdit = new InlineEditState
+                            {
+                                FieldId = "add_kit_error",
+                                LoadingMessage = "No kits found in the repository.",
+                            };
+                            break;
+                        }
+
+                        state.PendingKits = kits;
+                        state.PendingKitOwner = owner;
+                        state.PendingKitRepo = repo;
+                        state.PendingKitBranch = branch;
+                        state.PendingKitRepoUrl = repoUrl;
+                        state.PendingAction = "add_kit_select";
+                    }
+                    else if (action == "add_kit_select")
+                    {
+                        var kits = state.PendingKits ?? [];
+                        var kitOwner = state.PendingKitOwner ?? "";
+                        var kitRepo = state.PendingKitRepo ?? "";
+                        var kitBranch = state.PendingKitBranch ?? "";
+                        var kitRepoUrl = state.PendingKitRepoUrl ?? "";
+                        state.PendingKits = null;
+                        state.PendingKitOwner = null;
+                        state.PendingKitRepo = null;
+                        state.PendingKitBranch = null;
+                        state.PendingKitRepoUrl = null;
+
                         var preChoice = AnsiConsole.Prompt(
                             new SelectionPrompt<string>()
-                                .Title($"Found [cyan]{kits.Count}[/] kit(s) in [bold]{Markup.Escape(repoUrl)}[/]")
+                                .Title($"Found [cyan]{kits.Count}[/] kit(s) in [bold]{Markup.Escape(kitRepoUrl)}[/]")
                                 .AddChoices("Select kits →", "← Back"));
                         if (preChoice == "← Back") break;
 
@@ -301,8 +320,8 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
 
                         if (selected.Count > 0)
                         {
-                            var gitUrl = $"git+https://github.com/{owner}/{repo}.git";
-                            var refFragment = string.IsNullOrEmpty(branch) ? "" : $"&ref={Uri.EscapeDataString(branch)}";
+                            var gitUrl = $"git+https://github.com/{kitOwner}/{kitRepo}.git";
+                            var refFragment = string.IsNullOrEmpty(kitBranch) ? "" : $"&ref={Uri.EscapeDataString(kitBranch)}";
                             foreach (var k in selected)
                             {
                                 var url = k.Directory is not null
@@ -387,8 +406,10 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var edit = state.InlineEdit;
 
     var isFieldsEdit = edit?.FieldId is "name" or "agent" or "workdir" or "workspace_mode"
-        or "template_source" or "template_registry" or "template_git_url_select" or "template_git_url" or "template_git_branch";
-    var isKitsEdit = edit?.FieldId is "add_kit_url" or "add_kit_url_select" or "add_kit_branch";
+        or "template_source" or "template_registry" or "template_git_url_select" or "template_git_url" or "template_git_branch"
+        or "template_git_loading" or "template_git_error" or "template_git_dockerfile";
+    var isKitsEdit = edit?.FieldId is "add_kit_url" or "add_kit_url_select" or "add_kit_branch"
+        or "add_kit_loading" or "add_kit_error";
 
     var isFieldsFocused = focusedId is "name" or "agent" or "workdir" or "workspace_mode" or "template"
         || isFieldsEdit;
@@ -401,10 +422,6 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     // Live value shown in the left panel; selection edits preview current option, text edits show original
     string LiveValue(string id, string value)
     {
-        if (edit?.FieldId == id && edit.OptionLabels != null)
-            return edit.OptionLabels[Math.Clamp(edit.CurrentIndex, 0, edit.OptionLabels.Count - 1)];
-        if (id == "template" && edit?.FieldId is "template_source" or "template_git_url_select" && edit.OptionLabels != null)
-            return edit.OptionLabels[Math.Clamp(edit.CurrentIndex, 0, edit.OptionLabels.Count - 1)];
         if (id == "template" && edit?.FieldId is "template_registry" or "template_git_url" && edit.TextBuffer != null)
             return edit.TextBuffer;
         if (id == "template" && edit?.FieldId == "template_git_branch")
@@ -416,10 +433,10 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     {
         var displayValue = LiveValue(id, rawValue);
         var isFocused = focusedId == id || edit?.FieldId == id
-            || (id == "template" && edit?.FieldId is "template_source" or "template_registry" or "template_git_url_select" or "template_git_url" or "template_git_branch");
+            || (id == "template" && edit?.FieldId is "template_source" or "template_registry" or "template_git_url_select" or "template_git_url" or "template_git_branch" or "template_git_loading" or "template_git_error" or "template_git_dockerfile");
         if (isFocused)
-            return $"[green]▶{Markup.Escape(label.PadRight(21))}  {Markup.Escape(displayValue)}[/]";
-        return $" {Markup.Escape(label.PadRight(21))}  [white]{Markup.Escape(rawValue)}[/]";
+            return $"[green]▶ {Markup.Escape(label.PadRight(20))}  {Markup.Escape(displayValue)}[/]";
+        return $"  {Markup.Escape(label.PadRight(20))}  [white]{Markup.Escape(rawValue)}[/]";
     }
 
     // Spacer — a space character guarantees a non-empty line in Rows
@@ -441,14 +458,14 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         .Header(fieldsPanelHeader)
         .Border(BoxBorder.Rounded)
         .BorderColor(fieldsBorderColor)
-        .Padding(2, 1, 2, 1)
+        .Padding(1, 1, 1, 1)
         .Expand();
 
     // Kits panel
     var kitRows = new List<IRenderable> { spacer };
     if (config.Kits.Count == 0)
     {
-        kitRows.Add(new Markup(" [grey]No kits added[/]"));
+        kitRows.Add(new Markup("  [grey]No kits added[/]"));
     }
     else
     {
@@ -457,8 +474,8 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
             var kit = config.Kits[i];
             var isFocused = focusedId == $"kit:{i}";
             kitRows.Add(new Markup(isFocused
-                ? $"[green]▶{Markup.Escape(kit.DisplayName)}[/]"
-                : $" [white]{Markup.Escape(kit.DisplayName)}[/]"));
+                ? $"[green]▶ {Markup.Escape(kit.DisplayName)}[/]"
+                : $"  [white]{Markup.Escape(kit.DisplayName)}[/]"));
             kitRows.Add(spacer);
         }
     }
@@ -470,7 +487,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         .Header(kitsPanelHeader)
         .Border(BoxBorder.Rounded)
         .BorderColor(kitsBorderColor)
-        .Padding(2, 0, 2, 0)
+        .Padding(1, 0, 1, 0)
         .Expand();
 
     // Preview panel
@@ -483,7 +500,10 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
 
     var previewRows = new List<IRenderable> { new Markup($"[cyan]{Markup.Escape(command)}[/]") };
     if (config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
-        previewRows.Add(new Markup($"[yellow]Dockerfile [cyan]{Markup.Escape(config.Template.DockerfilePath ?? "")}[/] will be built before creating the sandbox.[/]"));
+    {
+        previewRows.Add(new Rule().RuleStyle("grey"));
+        previewRows.Add(new Markup($"[yellow]Dockerfile {Markup.Escape(config.Template.DockerfilePath ?? "")} will be built before creating the sandbox.[/]"));
+    }
 
     var commandPanel = new Panel(new Rows(previewRows))
         .Header("[grey]Preview[/]")
@@ -511,7 +531,9 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
             .Expand()
             .AddColumn(new TableColumn("").Padding(0, 0, 1, 0))
             .AddColumn(new TableColumn("").Width(halfWidth).Padding(0, 0, 0, 0));
-        splitTable.AddRow(new Rows(leftRows), BuildEditPanel(edit));
+        var kitsContentRows = config.Kits.Count == 0 ? 3 : 2 * config.Kits.Count + 2;
+        var targetPanelHeight = 9 + 1 + (kitsContentRows + 2);
+        splitTable.AddRow(new Rows(leftRows), BuildEditPanel(edit, targetPanelHeight - 2));
         outer.Add(splitTable);
     }
     else
@@ -533,14 +555,26 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     return new Rows(outer);
 }
 
-static Panel BuildEditPanel(InlineEditState edit)
+static Panel BuildEditPanel(InlineEditState edit, int targetContentLines = 0)
 {
     const int MinWidth = 46;
 
     string title;
     IRenderable mainContent;
 
-    if (edit.TextBuffer != null)
+    if (edit.LoadingMessage != null)
+    {
+        title = edit.FieldId switch
+        {
+            "template_git_loading" => "Fetching Repository",
+            "template_git_error"   => "Error",
+            "add_kit_loading"      => "Fetching Kits",
+            "add_kit_error"        => "Error",
+            _                      => "Loading"
+        };
+        mainContent = new Markup($"[grey]{Markup.Escape(edit.LoadingMessage)}[/]");
+    }
+    else if (edit.TextBuffer != null)
     {
         title = edit.FieldId switch
         {
@@ -565,6 +599,7 @@ static Panel BuildEditPanel(InlineEditState edit)
             "workspace_mode"          => "Select Workspace Mode",
             "template_source"         => "Select Template Source",
             "template_git_url_select" => "Select Template Repository",
+            "template_git_dockerfile" => "Select Dockerfile",
             "add_kit_url_select"      => "Select Repository",
             _                         => "Select"
         };
@@ -580,6 +615,9 @@ static Panel BuildEditPanel(InlineEditState edit)
         new Markup("[grey][white]Enter[/] confirm   [white]Esc[/] cancel[/]"),
         sp,
     };
+
+    while (targetContentLines > 0 && panelRows.Count < targetContentLines)
+        panelRows.Add(new Markup(" "));
 
     return new Panel(new Rows(panelRows))
         .Header($"[green]{Markup.Escape(title)}[/]")
@@ -845,7 +883,7 @@ static void HandleInlineEditKey(ConsoleKeyInfo key, TuiState state)
                         break; // empty = cancel
                     case "template_git_branch":
                         state.InlineEdit = null;
-                        state.PendingAction = $"edit_template_git:{edit.ContextValue}\n{edit.TextBuffer}";
+                        state.PendingAction = $"fetch_template_git:{edit.ContextValue}\n{edit.TextBuffer}";
                         return;
                     case "add_kit_url":
                         if (!string.IsNullOrWhiteSpace(edit.TextBuffer))
@@ -863,7 +901,7 @@ static void HandleInlineEditKey(ConsoleKeyInfo key, TuiState state)
                         break; // empty = cancel
                     case "add_kit_branch":
                         state.InlineEdit = null;
-                        state.PendingAction = $"add_kit:{edit.ContextValue}\n{edit.TextBuffer}";
+                        state.PendingAction = $"fetch_kit:{edit.ContextValue}\n{edit.TextBuffer}";
                         return;
                 }
                 state.InlineEdit = null;
@@ -898,6 +936,11 @@ static void HandleInlineEditKey(ConsoleKeyInfo key, TuiState state)
                 state.InlineEdit = edit.PreviousEdit;
                 break;
         }
+    }
+    else if (edit.LoadingMessage != null)
+    {
+        if (key.Key == ConsoleKey.Escape)
+            state.InlineEdit = null;
     }
 }
 
@@ -1024,6 +1067,19 @@ static void CommitSelectionEdit(InlineEditState edit, TuiState state)
                 };
             }
             break;
+
+        case "template_git_dockerfile":
+        {
+            var ctxParts = edit.ContextValue!.Split('\n', 2);
+            var cloneDir = ctxParts[0];
+            var branch = ctxParts.Length > 1 ? ctxParts[1] : "";
+            var dockerfile = edit.OptionLabels![edit.CurrentIndex];
+            var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
+            state.Config.Template = new TemplateConfig(TemplateSource.GitRepo, imageName,
+                Path.Combine(cloneDir, dockerfile), cloneDir, branch);
+            state.InlineEdit = null;
+            break;
+        }
     }
 }
 
@@ -1063,24 +1119,6 @@ static void PrintSbxCommand(string name, string? templateName, List<string> kitU
     PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir));
 }
 
-static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
-{
-    const string NewUrlOption = "Enter URL";
-
-    if (recentUrls.Count > 0)
-    {
-        var choice = AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title($"Select a [green]{purpose} repository URL[/]:")
-                .AddChoices([.. recentUrls, NewUrlOption]));
-
-        if (choice != NewUrlOption)
-            return choice;
-    }
-
-    var url = AnsiConsole.Ask<string>($"Enter the [green]GitHub repository URL[/] for the {purpose}:");
-    return url.Trim().TrimEnd('/');
-}
 
 static string BuildDisplayCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir)
 {
@@ -1123,7 +1161,7 @@ static (string? owner, string? repo) ParseGitHubUrl(string url)
     return (match.Groups["owner"].Value, match.Groups["repo"].Value);
 }
 
-static async Task<string> EnsureRepo(string owner, string repo, string branch, StatusContext ctx, HashSet<string>? fetchedRepos = null)
+static async Task<string> EnsureRepo(string owner, string repo, string branch, StatusContext? ctx, HashSet<string>? fetchedRepos = null)
 {
     var cloneDir = Path.Combine(Path.GetTempPath(), "create-sbx", owner, repo);
     var repoKey = $"{owner}/{repo}#{branch}";
@@ -1133,7 +1171,7 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
 
     if (Directory.Exists(Path.Combine(cloneDir, ".git")))
     {
-        ctx.Status("Fetching latest changes...");
+        ctx?.Status("Fetching latest changes...");
         if (string.IsNullOrEmpty(branch))
             await RunProcess("git", ["fetch", "origin"], cloneDir);
         else
@@ -1141,7 +1179,7 @@ static async Task<string> EnsureRepo(string owner, string repo, string branch, S
     }
     else
     {
-        ctx.Status("Cloning repository...");
+        ctx?.Status("Cloning repository...");
         Directory.CreateDirectory(Path.GetDirectoryName(cloneDir)!);
         await RunProcess("git", ["clone", $"https://github.com/{owner}/{repo}.git", cloneDir]);
     }
@@ -1366,6 +1404,11 @@ class TuiState
     public required HashSet<string> FetchedRepos { get; set; }
     public string? PendingAction { get; set; }
     public InlineEditState? InlineEdit { get; set; }
+    public List<Kit>? PendingKits { get; set; }
+    public string? PendingKitRepoUrl { get; set; }
+    public string? PendingKitOwner { get; set; }
+    public string? PendingKitRepo { get; set; }
+    public string? PendingKitBranch { get; set; }
 }
 
 class InlineEditState
@@ -1386,6 +1429,9 @@ class InlineEditState
 
     // Carries auxiliary context (e.g. the confirmed URL when entering a branch)
     public string? ContextValue { get; set; }
+
+    // Loading/error message (shown in panel instead of interactive content)
+    public string? LoadingMessage { get; set; }
 }
 
 record KitEntry(string Url, string DisplayName);
