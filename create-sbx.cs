@@ -208,9 +208,12 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
                 }
             default:
                 {
-                    if (action.StartsWith("edit_template_git_with_url:"))
+                    if (action.StartsWith("edit_template_git:"))
                     {
-                        var repoUrl = action["edit_template_git_with_url:".Length..];
+                        var body = action["edit_template_git:".Length..];
+                        var sep = body.IndexOf('\n');
+                        var repoUrl = sep >= 0 ? body[..sep] : body;
+                        var tBranch = sep >= 0 ? body[(sep + 1)..] : "";
                         var (tOwner, tRepo) = ParseGitHubUrl(repoUrl);
                         if (tOwner is null || tRepo is null)
                         {
@@ -219,10 +222,6 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
                         }
 
                         AddRecentUrl(state.RecentUrls, repoUrl);
-
-                        var tBranch = AnsiConsole.Prompt(
-                            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                                .AllowEmpty());
 
                         List<string> dockerfiles = [];
                         string cloneDir = "";
@@ -252,9 +251,12 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
                         state.Config.Template = new TemplateConfig(TemplateSource.GitRepo, imageName,
                             Path.Combine(cloneDir, selectedDockerfile), cloneDir, tBranch);
                     }
-                    else if (action.StartsWith("add_kit_with_url:"))
+                    else if (action.StartsWith("add_kit:"))
                     {
-                        var repoUrl = action["add_kit_with_url:".Length..];
+                        var body = action["add_kit:".Length..];
+                        var sep = body.IndexOf('\n');
+                        var repoUrl = sep >= 0 ? body[..sep] : body;
+                        var branch = sep >= 0 ? body[(sep + 1)..] : "";
                         var (owner, repo) = ParseGitHubUrl(repoUrl);
                         if (owner is null || repo is null)
                         {
@@ -263,10 +265,6 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
                         }
 
                         AddRecentUrl(state.RecentUrls, repoUrl);
-
-                        var branch = AnsiConsole.Prompt(
-                            new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
-                                .AllowEmpty());
 
                         List<Kit> kits = [];
                         await AnsiConsole.Status()
@@ -389,8 +387,8 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var edit = state.InlineEdit;
 
     var isFieldsEdit = edit?.FieldId is "name" or "agent" or "workdir" or "workspace_mode"
-        or "template_source" or "template_registry" or "template_git_url_select" or "template_git_url";
-    var isKitsEdit = edit?.FieldId is "add_kit_url" or "add_kit_url_select";
+        or "template_source" or "template_registry" or "template_git_url_select" or "template_git_url" or "template_git_branch";
+    var isKitsEdit = edit?.FieldId is "add_kit_url" or "add_kit_url_select" or "add_kit_branch";
 
     var isFieldsFocused = focusedId is "name" or "agent" or "workdir" or "workspace_mode" or "template"
         || isFieldsEdit;
@@ -409,6 +407,8 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
             return edit.OptionLabels[Math.Clamp(edit.CurrentIndex, 0, edit.OptionLabels.Count - 1)];
         if (id == "template" && edit?.FieldId is "template_registry" or "template_git_url" && edit.TextBuffer != null)
             return edit.TextBuffer;
+        if (id == "template" && edit?.FieldId == "template_git_branch")
+            return edit.ContextValue ?? value;
         return value;
     }
 
@@ -416,10 +416,10 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     {
         var displayValue = LiveValue(id, rawValue);
         var isFocused = focusedId == id || edit?.FieldId == id
-            || (id == "template" && edit?.FieldId is "template_source" or "template_registry" or "template_git_url_select" or "template_git_url");
+            || (id == "template" && edit?.FieldId is "template_source" or "template_registry" or "template_git_url_select" or "template_git_url" or "template_git_branch");
         if (isFocused)
-            return $"[green]▶ {Markup.Escape(label.PadRight(20))}  {Markup.Escape(displayValue)}[/]";
-        return $"  {Markup.Escape(label.PadRight(20))}  [white]{Markup.Escape(rawValue)}[/]";
+            return $"[green]▶{Markup.Escape(label.PadRight(21))}  {Markup.Escape(displayValue)}[/]";
+        return $" {Markup.Escape(label.PadRight(21))}  [white]{Markup.Escape(rawValue)}[/]";
     }
 
     // Spacer — a space character guarantees a non-empty line in Rows
@@ -431,7 +431,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         new Markup(FieldRow("name", "Name", config.Name)),
         new Markup(FieldRow("agent", "Agent", agentDisplay)),
         new Markup(FieldRow("workdir", "Working Directory", config.WorkingDirectory)),
-        new Markup(FieldRow("workspace_mode", "Workspace Mode", config.WorkspaceMode.Name)),
+        new Markup(FieldRow("workspace_mode", "Workspace Mode", $"{config.WorkspaceMode.Name} - {config.WorkspaceMode.Description}")),
         new Markup(FieldRow("template", "Template", GetTemplateDisplay(config.Template))),
     };
 
@@ -448,7 +448,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
     var kitRows = new List<IRenderable> { spacer };
     if (config.Kits.Count == 0)
     {
-        kitRows.Add(new Markup("[grey]No kits added[/]"));
+        kitRows.Add(new Markup(" [grey]No kits added[/]"));
     }
     else
     {
@@ -457,8 +457,8 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
             var kit = config.Kits[i];
             var isFocused = focusedId == $"kit:{i}";
             kitRows.Add(new Markup(isFocused
-                ? $"[green]▶ {Markup.Escape(kit.DisplayName)}[/]"
-                : $"  [white]{Markup.Escape(kit.DisplayName)}[/]"));
+                ? $"[green]▶{Markup.Escape(kit.DisplayName)}[/]"
+                : $" [white]{Markup.Escape(kit.DisplayName)}[/]"));
             kitRows.Add(spacer);
         }
     }
@@ -473,7 +473,7 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         .Padding(2, 0, 2, 0)
         .Expand();
 
-    // Command panel
+    // Preview panel
     var agentId = config.CustomAgentId ?? config.SelectedAgent.Id;
     var kitUrls = config.Kits.Select(k => k.Url).ToList();
     var displayTemplateName = config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local
@@ -481,8 +481,12 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         : config.Template?.ImageName;
     var command = BuildDisplayCommand(config.Name, displayTemplateName, kitUrls, config.WorkspaceMode, agentId, config.WorkingDirectory);
 
-    var commandPanel = new Panel(new Markup($"[cyan]{Markup.Escape(command)}[/]"))
-        .Header("[grey]Command[/]")
+    var previewRows = new List<IRenderable> { new Markup($"[cyan]{Markup.Escape(command)}[/]") };
+    if (config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
+        previewRows.Add(new Markup($"[yellow]Dockerfile [cyan]{Markup.Escape(config.Template.DockerfilePath ?? "")}[/] will be built before creating the sandbox.[/]"));
+
+    var commandPanel = new Panel(new Rows(previewRows))
+        .Header("[grey]Preview[/]")
         .Border(BoxBorder.Rounded)
         .BorderColor(Color.Grey)
         .Padding(1, 0, 1, 0)
@@ -540,12 +544,14 @@ static Panel BuildEditPanel(InlineEditState edit)
     {
         title = edit.FieldId switch
         {
-            "name"              => "Edit Name",
-            "workdir"           => "Edit Working Directory",
-            "template_registry" => "Docker Image Name",
-            "template_git_url"  => "Template Repository URL",
-            "add_kit_url"       => "Kit Repository URL",
-            _                   => "Edit"
+            "name"                => "Edit Name",
+            "workdir"             => "Edit Working Directory",
+            "template_registry"   => "Docker Image Name",
+            "template_git_url"    => "Template Repository URL",
+            "template_git_branch" => "Template Branch (leave blank for default)",
+            "add_kit_url"         => "Kit Repository URL",
+            "add_kit_branch"      => "Kit Branch (leave blank for default)",
+            _                     => "Edit"
         };
         var buf = edit.TextBuffer;
         var padded = buf.PadRight(Math.Max(MinWidth, buf.Length + 1));
@@ -633,14 +639,14 @@ static string GetContextualHints(string focused, InlineEditState? edit)
 
     return focused switch
     {
-        "name" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("w")} {D("workspace folder")}   {K("d")} {D("default")}",
+        "name" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("c")} {D("current folder")}   {K("d")} {D("default")}",
         "agent" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}",
         "workdir" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("d")} {D("default (.)")}",
         "workspace_mode" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}",
         "template" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("d")} {D("default (none)")}",
         "kits" => $"{K("↑/↓")} {D("navigate")}   {K("a")} {D("add kit")}",
         "create" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("create sandbox")}",
-        "cancel" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("cancel")}",
+        "cancel" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("exit")}",
         var s when s.StartsWith("kit:") => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("confirm remove")}   {K("r")} {D("remove")}   {K("a")} {D("add kit")}",
         _ => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}"
     };
@@ -826,19 +832,39 @@ static void HandleInlineEditKey(ConsoleKeyInfo key, TuiState state)
                     case "template_git_url":
                         if (!string.IsNullOrWhiteSpace(edit.TextBuffer))
                         {
-                            state.InlineEdit = null;
-                            state.PendingAction = $"edit_template_git_with_url:{edit.TextBuffer.Trim().TrimEnd('/')}";
+                            state.InlineEdit = new InlineEditState
+                            {
+                                FieldId = "template_git_branch",
+                                TextBuffer = "",
+                                TextOriginal = "",
+                                ContextValue = edit.TextBuffer.Trim().TrimEnd('/'),
+                                PreviousEdit = edit,
+                            };
                             return;
                         }
                         break; // empty = cancel
+                    case "template_git_branch":
+                        state.InlineEdit = null;
+                        state.PendingAction = $"edit_template_git:{edit.ContextValue}\n{edit.TextBuffer}";
+                        return;
                     case "add_kit_url":
                         if (!string.IsNullOrWhiteSpace(edit.TextBuffer))
                         {
-                            state.InlineEdit = null;
-                            state.PendingAction = $"add_kit_with_url:{edit.TextBuffer.Trim().TrimEnd('/')}";
+                            state.InlineEdit = new InlineEditState
+                            {
+                                FieldId = "add_kit_branch",
+                                TextBuffer = "",
+                                TextOriginal = "",
+                                ContextValue = edit.TextBuffer.Trim().TrimEnd('/'),
+                                PreviousEdit = edit,
+                            };
                             return;
                         }
                         break; // empty = cancel
+                    case "add_kit_branch":
+                        state.InlineEdit = null;
+                        state.PendingAction = $"add_kit:{edit.ContextValue}\n{edit.TextBuffer}";
+                        return;
                 }
                 state.InlineEdit = null;
                 break;
@@ -962,8 +988,14 @@ static void CommitSelectionEdit(InlineEditState edit, TuiState state)
             else
             {
                 var url = edit.OptionLabels[edit.CurrentIndex].Trim().TrimEnd('/');
-                state.InlineEdit = null;
-                state.PendingAction = $"edit_template_git_with_url:{url}";
+                state.InlineEdit = new InlineEditState
+                {
+                    FieldId = "template_git_branch",
+                    TextBuffer = "",
+                    TextOriginal = "",
+                    ContextValue = url,
+                    PreviousEdit = edit,
+                };
             }
             break;
 
@@ -982,8 +1014,14 @@ static void CommitSelectionEdit(InlineEditState edit, TuiState state)
             else
             {
                 var url = edit.OptionLabels[edit.CurrentIndex].Trim().TrimEnd('/');
-                state.InlineEdit = null;
-                state.PendingAction = $"add_kit_with_url:{url}";
+                state.InlineEdit = new InlineEditState
+                {
+                    FieldId = "add_kit_branch",
+                    TextBuffer = "",
+                    TextOriginal = "",
+                    ContextValue = url,
+                    PreviousEdit = edit,
+                };
             }
             break;
     }
@@ -993,7 +1031,7 @@ static void HandleShortcutKey(char ch, string focused, TuiState state, string wo
 {
     switch (ch)
     {
-        case 'w' when focused == "name":
+        case 'c' when focused == "name":
         case 'd' when focused == "name":
             state.Config.Name = workspaceFolderName;
             break;
@@ -1345,6 +1383,9 @@ class InlineEditState
 
     // Set when this edit was entered from another — Esc restores it instead of closing entirely
     public InlineEditState? PreviousEdit { get; set; }
+
+    // Carries auxiliary context (e.g. the confirmed URL when entering a branch)
+    public string? ContextValue { get; set; }
 }
 
 record KitEntry(string Url, string DisplayName);
