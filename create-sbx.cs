@@ -31,12 +31,18 @@ async Task<int> RunAsync()
         new("shell", "Shell", "Agent-less sandbox for manual setup or testing"),
     };
 
+    var workspaceModes = new List<WorkspaceMode>
+    {
+        new("Direct", "Mount the host directory directly into the sandbox", false),
+        new("Clone", "Clone the repository into the sandbox", true),
+    };
+
     var config = new SandboxConfig
     {
         Name = workspaceFolderName,
         SelectedAgent = builtInAgents[0],
         WorkingDirectory = ".",
-        WorkspaceMode = new WorkspaceMode("Direct", "Mount the host directory directly into the sandbox", false),
+        WorkspaceMode = workspaceModes[0],
         Template = null,
         Kits = [],
     };
@@ -44,12 +50,14 @@ async Task<int> RunAsync()
     var tuiState = new TuiState
     {
         Config = config,
+        BuiltInAgents = builtInAgents,
+        WorkspaceModes = workspaceModes,
         FocusIndex = 0,
         RecentUrls = LoadRecentUrls(),
         FetchedRepos = [],
     };
 
-    var tuiResult = await RunTuiAsync(tuiState, workspaceFolderName, builtInAgents);
+    var tuiResult = await RunTuiAsync(tuiState, workspaceFolderName);
     if (tuiResult != 0) return 0;
 
     var agentId = config.CustomAgentId ?? config.SelectedAgent.Id;
@@ -114,73 +122,32 @@ async Task<int> RunAsync()
     return 0;
 }
 
-async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName, List<AgentOption> builtInAgents)
+async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName)
 {
-    const string CustomAgentSentinel = "__custom__";
-
-    var workspaceModes = new List<WorkspaceMode>
-    {
-        new("Direct", "Mount the host directory directly into the sandbox", false),
-        new("Clone", "Clone the repository into the sandbox", true),
-    };
-
     async Task DispatchActionAsync(string action)
     {
         switch (action)
         {
-            case "edit_name":
+            case "edit_custom_agent":
             {
-                state.Config.Name = AnsiConsole.Prompt(
-                    new TextPrompt<string>("Enter the [green]sandbox name[/]:")
-                        .DefaultValue(state.Config.Name));
-                break;
-            }
-            case "edit_agent":
-            {
-                var selected = AnsiConsole.Prompt(
-                    new SelectionPrompt<AgentOption>()
-                        .Title("Select [green]agent[/]:")
-                        .AddChoices([.. builtInAgents, new AgentOption(CustomAgentSentinel, "Custom agent...", null)])
-                        .UseConverter(a => a.Id == CustomAgentSentinel
-                            ? "[grey]Custom agent...[/]"
-                            : a.Description is not null
-                                ? $"{a.DisplayName} [grey]({a.Id})[/] [grey]- {a.Description}[/]"
-                                : $"{a.DisplayName} [grey]({a.Id})[/]"));
-
-                if (selected.Id == CustomAgentSentinel)
+                var current = state.Config.CustomAgentId ?? "";
+                var customId = AnsiConsole.Prompt(
+                    new TextPrompt<string>("Enter the [green]custom agent identifier[/]:")
+                        .DefaultValue(current.Length > 0 ? current : "")
+                        .AllowEmpty());
+                if (!string.IsNullOrWhiteSpace(customId))
                 {
-                    var customId = AnsiConsole.Ask<string>("Enter the [green]custom agent identifier[/]:");
                     state.Config.SelectedAgent = new AgentOption(customId, customId, null);
                     state.Config.CustomAgentId = customId;
                 }
-                else
-                {
-                    state.Config.SelectedAgent = selected;
-                    state.Config.CustomAgentId = null;
-                }
-                break;
-            }
-            case "edit_workdir":
-            {
-                state.Config.WorkingDirectory = AnsiConsole.Prompt(
-                    new TextPrompt<string>("Enter the [green]working directory[/]:")
-                        .DefaultValue(state.Config.WorkingDirectory));
-                break;
-            }
-            case "edit_workspace_mode":
-            {
-                state.Config.WorkspaceMode = AnsiConsole.Prompt(
-                    new SelectionPrompt<WorkspaceMode>()
-                        .Title("Select [green]workspace mode[/]:")
-                        .AddChoices(workspaceModes)
-                        .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
                 break;
             }
             case "edit_template":
             {
                 var templateChoices = new (int Key, string Label)[]
                 {
-                    (-1, "None (use default)"),
+                    (-1, "← Back"),
+                    (-2, "None (use default)"),
                     ((int)TemplateSource.Registry, "Docker image"),
                     ((int)TemplateSource.GitRepo, "Dockerfile - Git repository"),
                     ((int)TemplateSource.Local, "Dockerfile - local"),
@@ -196,18 +163,20 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName, List<Age
                         .AddChoices(templateChoices)
                         .UseConverter(c => c.Label));
 
-                if (selectedChoice.Key == -1)
-                {
-                    state.Config.Template = null;
-                    break;
-                }
+                if (selectedChoice.Key == -1) break; // Back - keep current
+                if (selectedChoice.Key == -2) { state.Config.Template = null; break; }
 
                 var source = (TemplateSource)selectedChoice.Key;
 
                 if (source == TemplateSource.Registry)
                 {
-                    var imageName = AnsiConsole.Ask<string>("Enter the [green]image name[/] [grey](e.g. ubuntu:22.04)[/]:");
-                    state.Config.Template = new TemplateConfig(TemplateSource.Registry, imageName.Trim(), null, null);
+                    var current = state.Config.Template?.Source == TemplateSource.Registry
+                        ? state.Config.Template.ImageName : "";
+                    var imageName = AnsiConsole.Prompt(
+                        new TextPrompt<string>("Enter the [green]image name[/] [grey](e.g. ubuntu:22.04, Esc/empty to cancel)[/]:")
+                            .AllowEmpty());
+                    if (!string.IsNullOrWhiteSpace(imageName))
+                        state.Config.Template = new TemplateConfig(TemplateSource.Registry, imageName.Trim(), null, null);
                     break;
                 }
 
@@ -243,11 +212,15 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName, List<Age
                         break;
                     }
 
+                    var cancelLabel = "← Back";
+                    var dockerfileChoices = new[] { cancelLabel }.Concat(dockerfiles).ToList();
                     var selectedDockerfile = AnsiConsole.Prompt(
                         new SelectionPrompt<string>()
                             .Title("Select a [green]Dockerfile[/]:")
                             .PageSize(20)
-                            .AddChoices(dockerfiles));
+                            .AddChoices(dockerfileChoices));
+
+                    if (selectedDockerfile == cancelLabel) break;
 
                     var absolutePath = Path.Combine(cloneDir, selectedDockerfile);
                     var imageName = $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
@@ -257,7 +230,10 @@ async Task<int> RunTuiAsync(TuiState state, string workspaceFolderName, List<Age
 
                 // Local Dockerfile
                 {
-                    var dockerfilePath = AnsiConsole.Ask<string>("Enter the [green]path to the Dockerfile[/]:");
+                    var dockerfilePath = AnsiConsole.Prompt(
+                        new TextPrompt<string>("Enter the [green]path to the Dockerfile[/] [grey](empty to cancel)[/]:")
+                            .AllowEmpty());
+                    if (string.IsNullOrWhiteSpace(dockerfilePath)) break;
                     dockerfilePath = Path.GetFullPath(dockerfilePath.Trim());
 
                     if (!File.Exists(dockerfilePath))
@@ -390,7 +366,6 @@ static List<string> GetFocusableItems(TuiState state)
     var items = new List<string> { "name", "agent", "workdir", "workspace_mode", "template" };
     for (var i = 0; i < state.Config.Kits.Count; i++)
         items.Add($"kit:{i}");
-    items.Add("add_kit");
     items.Add("create");
     items.Add("cancel");
     return items;
@@ -400,66 +375,54 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
 {
     var config = state.Config;
     var items = GetFocusableItems(state);
-    var focused = items[Math.Clamp(state.FocusIndex, 0, items.Count - 1)];
+    var focusedId = items[Math.Clamp(state.FocusIndex, 0, items.Count - 1)];
+    var edit = state.InlineEdit;
 
     var agentDisplay = config.CustomAgentId is not null
         ? $"Custom: {config.CustomAgentId}"
         : $"{config.SelectedAgent.DisplayName} ({config.SelectedAgent.Id})";
-    var agentIsDefault = config.SelectedAgent.Id == "claude" && config.CustomAgentId is null;
-    var templateDisplay = GetTemplateDisplay(config.Template);
 
-    static string ValueMarkup(string value, bool isDefault, bool isFocused)
+    // Returns the display value for a field — uses edit buffer if currently editing
+    string LiveValue(string id, string value)
     {
-        if (isFocused) return $"[bold white]{Markup.Escape(value)}[/]";
-        if (isDefault) return $"[grey dim][[ {Markup.Escape(value)} ]][/]";
-        return $"[cyan]{Markup.Escape(value)}[/]";
+        if (edit?.FieldId == id && edit.TextBuffer != null)
+            return edit.TextBuffer + "▌";
+        if (edit?.FieldId == id && edit.OptionLabels != null)
+            return edit.OptionLabels[Math.Clamp(edit.CurrentIndex, 0, edit.OptionLabels.Count - 1)];
+        return value;
     }
 
-    string FieldRow(string id, string label, string value, bool isDefault)
+    string FieldRow(string id, string label, string rawValue)
     {
-        var isFocused = focused == id;
-        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
-        var labelStr = $"[grey]{Markup.Escape(label.PadRight(20))}[/]";
-        return $" {indicator} {labelStr}  {ValueMarkup(value, isDefault, isFocused)}";
+        var displayValue = LiveValue(id, rawValue);
+        var isFocused = focusedId == id || edit?.FieldId == id;
+        if (isFocused)
+            return $"[green] ▶ {Markup.Escape(label.PadRight(20))}  {Markup.Escape(displayValue)}[/]";
+        return $"    {Markup.Escape(label.PadRight(20))}  [white]{Markup.Escape(rawValue)}[/]";
     }
 
-    var rows = new List<IRenderable>();
-    rows.Add(new Markup("[bold]Create Sandbox[/]"));
-    rows.Add(new Rule { Style = Style.Parse("grey") });
-    rows.Add(new Markup(FieldRow("name", "Name", config.Name, config.Name == workspaceFolderName)));
-    rows.Add(new Markup(FieldRow("agent", "Agent", agentDisplay, agentIsDefault)));
-    rows.Add(new Markup(FieldRow("workdir", "Working Directory", config.WorkingDirectory, config.WorkingDirectory == ".")));
-    rows.Add(new Markup(FieldRow("workspace_mode", "Workspace Mode", config.WorkspaceMode.Name, !config.WorkspaceMode.UseClone)));
-    rows.Add(new Markup(FieldRow("template", "Template", templateDisplay, config.Template is null)));
-
-    // Kits section
-    rows.Add(new Markup(""));
-    rows.Add(new Markup("[grey]  Kits[/]"));
-    rows.Add(new Rule { Style = Style.Parse("grey dim") });
-
-    if (config.Kits.Count == 0)
-        rows.Add(new Markup("[grey dim]    (no kits added)[/]"));
-
-    for (var i = 0; i < config.Kits.Count; i++)
+    // Option rows for inline selection dropdown (indented to value column)
+    IEnumerable<IRenderable> DropdownRows(string fieldId)
     {
-        var kit = config.Kits[i];
-        var kitId = $"kit:{i}";
-        var isFocused = focused == kitId;
-        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
-        var kitMarkup = isFocused
-            ? $"[bold white]× {Markup.Escape(kit.DisplayName)}[/]"
-            : $"[cyan]× {Markup.Escape(kit.DisplayName)}[/]";
-        rows.Add(new Markup($" {indicator} {kitMarkup}"));
+        if (edit?.FieldId != fieldId || edit.OptionLabels == null) yield break;
+
+        var pageSize = 8;
+        var start = Math.Max(0, edit.CurrentIndex - pageSize / 2);
+        start = Math.Min(start, Math.Max(0, edit.OptionLabels.Count - pageSize));
+        var end = Math.Min(edit.OptionLabels.Count, start + pageSize);
+
+        if (start > 0) yield return new Markup("[grey]                             ↑ more[/]");
+        for (var i = start; i < end; i++)
+        {
+            var label = Markup.Escape(edit.OptionLabels[i]);
+            if (i == edit.CurrentIndex)
+                yield return new Markup($"[green]                           ▶ {label}[/]");
+            else
+                yield return new Markup($"                             [grey]{label}[/]");
+        }
+        if (end < edit.OptionLabels.Count) yield return new Markup("[grey]                             ↓ more[/]");
     }
 
-    {
-        var isFocused = focused == "add_kit";
-        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
-        var addKitText = isFocused ? "[bold white on blue] + Add kit [/]" : "[grey]+ Add kit[/]";
-        rows.Add(new Markup($" {indicator} {addKitText}"));
-    }
-
-    // Command preview
     var agentId = config.CustomAgentId ?? config.SelectedAgent.Id;
     var kitUrls = config.Kits.Select(k => k.Url).ToList();
     var displayTemplateName = config.Template?.Source is TemplateSource.GitRepo or TemplateSource.Local
@@ -467,33 +430,77 @@ static IRenderable RenderForm(TuiState state, string workspaceFolderName)
         : config.Template?.ImageName;
     var command = BuildDisplayCommand(config.Name, displayTemplateName, kitUrls, config.WorkspaceMode, agentId, config.WorkingDirectory);
 
+    var rows = new List<IRenderable>();
+    rows.Add(new Markup("[bold]Create Sandbox[/]"));
     rows.Add(new Markup(""));
-    rows.Add(new Panel(new Markup($"[dim]{Markup.Escape(command)}[/]"))
-    {
-        Header = new PanelHeader("[grey]Command[/]"),
-        Border = BoxBorder.Rounded,
-        BorderStyle = Style.Parse("grey"),
-        Padding = new Padding(1, 0),
-    });
 
-    // Action buttons (stacked)
+    rows.Add(new Markup(FieldRow("name", "Name", config.Name)));
+    rows.AddRange(DropdownRows("name"));
+    rows.Add(new Markup(""));
+
+    rows.Add(new Markup(FieldRow("agent", "Agent", agentDisplay)));
+    rows.AddRange(DropdownRows("agent"));
+    rows.Add(new Markup(""));
+
+    rows.Add(new Markup(FieldRow("workdir", "Working Directory", config.WorkingDirectory)));
+    rows.AddRange(DropdownRows("workdir"));
+    rows.Add(new Markup(""));
+
+    rows.Add(new Markup(FieldRow("workspace_mode", "Workspace Mode", config.WorkspaceMode.Name)));
+    rows.AddRange(DropdownRows("workspace_mode"));
+    rows.Add(new Markup(""));
+
+    rows.Add(new Markup(FieldRow("template", "Template", GetTemplateDisplay(config.Template))));
+    rows.AddRange(DropdownRows("template"));
+
+    // Kits section
+    rows.Add(new Markup(""));
+    rows.Add(new Markup("[grey]  Kits[/]"));
+    rows.Add(new Markup(""));
+
+    if (config.Kits.Count == 0)
+    {
+        rows.Add(new Markup("[grey dim]    (no kits added)[/]"));
+    }
+    else
+    {
+        for (var i = 0; i < config.Kits.Count; i++)
+        {
+            var kit = config.Kits[i];
+            var kitId = $"kit:{i}";
+            var isFocused = focusedId == kitId;
+            var indicator = isFocused ? "[green] ▶ " : "    ";
+            var kitMarkup = isFocused
+                ? $"[green]{Markup.Escape(kit.DisplayName)}[/]"
+                : $"[white]{Markup.Escape(kit.DisplayName)}[/]";
+            rows.Add(new Markup($"{indicator}{kitMarkup}"));
+            rows.Add(new Markup(""));
+        }
+    }
+
+    // Action buttons
     rows.Add(new Markup(""));
     {
-        var isFocused = focused == "create";
-        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
-        var text = isFocused ? "[bold white on blue] Create Sandbox [/]" : "[grey]Create Sandbox[/]";
-        rows.Add(new Markup($" {indicator} {text}"));
+        var isFocused = focusedId == "create";
+        rows.Add(new Markup(isFocused
+            ? "[green] ▶ Create Sandbox[/]"
+            : "    [white]Create Sandbox[/]"));
     }
+    rows.Add(new Markup(""));
     {
-        var isFocused = focused == "cancel";
-        var indicator = isFocused ? "[bold blue]▶[/]" : " ";
-        var text = isFocused ? "[bold white on blue] Cancel [/]" : "[grey]Cancel[/]";
-        rows.Add(new Markup($" {indicator} {text}"));
+        var isFocused = focusedId == "cancel";
+        rows.Add(new Markup(isFocused
+            ? "[green] ▶ Cancel[/]"
+            : "    [white]Cancel[/]"));
     }
+
+    // Command preview (below buttons, cyan)
+    rows.Add(new Markup(""));
+    rows.Add(new Markup($"    [cyan]{Markup.Escape(command)}[/]"));
 
     // Contextual hints footer
-    rows.Add(new Rule { Style = Style.Parse("grey") });
-    rows.Add(new Markup($"[grey dim]{GetContextualHints(focused)}[/]"));
+    rows.Add(new Markup(""));
+    rows.Add(new Markup(GetContextualHints(focusedId, edit)));
 
     return new Rows(rows);
 }
@@ -515,22 +522,39 @@ static string GetTemplateDisplay(TemplateConfig? template)
     };
 }
 
-static string GetContextualHints(string focused) => focused switch
+static string GetContextualHints(string focused, InlineEditState? edit)
 {
-    "name" => "↑/↓ navigate   Enter  enter text   w  workspace folder   d  default",
-    "agent" => "↑/↓ navigate   Enter  select",
-    "workdir" => "↑/↓ navigate   Enter  enter text   d  default (.)",
-    "workspace_mode" => "↑/↓ navigate   Enter  select",
-    "template" => "↑/↓ navigate   Enter  edit   d  default (none)",
-    "add_kit" => "↑/↓ navigate   Enter  add kit",
-    "create" => "↑/↓ navigate   Enter  create sandbox",
-    "cancel" => "↑/↓ navigate   Enter  cancel",
-    var s when s.StartsWith("kit:") => "↑/↓ navigate   Enter  confirm remove   r  remove",
-    _ => "↑/↓ navigate   Enter  select"
-};
+    static string K(string key) => $"[white]{Markup.Escape(key)}[/]";
+    static string D(string desc) => $"[grey]{Markup.Escape(desc)}[/]";
+
+    if (edit?.TextBuffer != null)
+        return $"{K("Enter")} {D("confirm")}   {K("Esc")} {D("cancel")}";
+
+    if (edit?.OptionLabels != null)
+        return $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}   {K("Esc")} {D("cancel")}";
+
+    return focused switch
+    {
+        "name"           => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("w")} {D("workspace folder")}   {K("d")} {D("default")}",
+        "agent"          => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}",
+        "workdir"        => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("d")} {D("default (.)")}",
+        "workspace_mode" => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}",
+        "template"       => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("edit")}   {K("d")} {D("default (none)")}",
+        "create"         => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("create sandbox")}   {K("a")} {D("add kit")}",
+        "cancel"         => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("cancel")}   {K("a")} {D("add kit")}",
+        var s when s.StartsWith("kit:") => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("confirm remove")}   {K("r")} {D("remove")}   {K("a")} {D("add kit")}",
+        _ => $"{K("↑/↓")} {D("navigate")}   {K("Enter")} {D("select")}"
+    };
+}
 
 static void HandleKeyPress(ConsoleKeyInfo key, TuiState state, string workspaceFolderName)
 {
+    if (state.InlineEdit != null)
+    {
+        HandleInlineEditKey(key, state);
+        return;
+    }
+
     var items = GetFocusableItems(state);
     var focused = items[Math.Clamp(state.FocusIndex, 0, items.Count - 1)];
 
@@ -546,19 +570,7 @@ static void HandleKeyPress(ConsoleKeyInfo key, TuiState state, string workspaceF
             state.FocusIndex = (state.FocusIndex + 1) % items.Count;
             break;
         case ConsoleKey.Enter:
-            state.PendingAction = focused switch
-            {
-                "name" => "edit_name",
-                "agent" => "edit_agent",
-                "workdir" => "edit_workdir",
-                "workspace_mode" => "edit_workspace_mode",
-                "template" => "edit_template",
-                "add_kit" => "add_kit",
-                "create" => "create",
-                "cancel" => "cancel",
-                var s when s.StartsWith("kit:") => s,
-                _ => null
-            };
+            HandleEnterKey(focused, state);
             break;
         case ConsoleKey.Delete:
         case ConsoleKey.Backspace:
@@ -574,13 +586,151 @@ static void HandleKeyPress(ConsoleKeyInfo key, TuiState state, string workspaceF
     }
 }
 
+static void HandleEnterKey(string focused, TuiState state)
+{
+    switch (focused)
+    {
+        case "name":
+            state.InlineEdit = new InlineEditState
+            {
+                FieldId = "name",
+                TextBuffer = state.Config.Name,
+                TextOriginal = state.Config.Name,
+            };
+            break;
+        case "agent":
+        {
+            var labels = state.BuiltInAgents
+                .Select(a => a.Description is not null
+                    ? $"{a.DisplayName} ({a.Id}) - {a.Description}"
+                    : $"{a.DisplayName} ({a.Id})")
+                .Append("Custom agent...")
+                .ToList();
+            var current = state.BuiltInAgents.FindIndex(a => a.Id == state.Config.SelectedAgent.Id);
+            if (current < 0) current = 0;
+            state.InlineEdit = new InlineEditState
+            {
+                FieldId = "agent",
+                OptionLabels = labels,
+                CurrentIndex = current,
+                OriginalIndex = current,
+            };
+            break;
+        }
+        case "workdir":
+            state.InlineEdit = new InlineEditState
+            {
+                FieldId = "workdir",
+                TextBuffer = state.Config.WorkingDirectory,
+                TextOriginal = state.Config.WorkingDirectory,
+            };
+            break;
+        case "workspace_mode":
+        {
+            var labels = state.WorkspaceModes.Select(m => $"{m.Name} - {m.Description}").ToList();
+            var current = state.WorkspaceModes.FindIndex(m => m.Name == state.Config.WorkspaceMode.Name);
+            if (current < 0) current = 0;
+            state.InlineEdit = new InlineEditState
+            {
+                FieldId = "workspace_mode",
+                OptionLabels = labels,
+                CurrentIndex = current,
+                OriginalIndex = current,
+            };
+            break;
+        }
+        case "template":
+            state.PendingAction = "edit_template";
+            break;
+        case "create":
+            state.PendingAction = "create";
+            break;
+        case "cancel":
+            state.PendingAction = "cancel";
+            break;
+        default:
+            if (focused.StartsWith("kit:"))
+                state.PendingAction = focused;
+            break;
+    }
+}
+
+static void HandleInlineEditKey(ConsoleKeyInfo key, TuiState state)
+{
+    var edit = state.InlineEdit!;
+
+    if (edit.TextBuffer != null)
+    {
+        switch (key.Key)
+        {
+            case ConsoleKey.Enter:
+                if (edit.FieldId == "name") state.Config.Name = edit.TextBuffer;
+                else if (edit.FieldId == "workdir") state.Config.WorkingDirectory = edit.TextBuffer;
+                state.InlineEdit = null;
+                break;
+            case ConsoleKey.Escape:
+                state.InlineEdit = null;
+                break;
+            case ConsoleKey.Backspace:
+                if (edit.TextBuffer.Length > 0)
+                    edit.TextBuffer = edit.TextBuffer[..^1];
+                break;
+            default:
+                if (!char.IsControl(key.KeyChar))
+                    edit.TextBuffer += key.KeyChar;
+                break;
+        }
+    }
+    else if (edit.OptionLabels != null)
+    {
+        switch (key.Key)
+        {
+            case ConsoleKey.UpArrow:
+                edit.CurrentIndex = Math.Max(0, edit.CurrentIndex - 1);
+                break;
+            case ConsoleKey.DownArrow:
+                edit.CurrentIndex = Math.Min(edit.OptionLabels.Count - 1, edit.CurrentIndex + 1);
+                break;
+            case ConsoleKey.Enter:
+                CommitSelectionEdit(edit, state);
+                break;
+            case ConsoleKey.Escape:
+                state.InlineEdit = null;
+                break;
+        }
+    }
+}
+
+static void CommitSelectionEdit(InlineEditState edit, TuiState state)
+{
+    if (edit.FieldId == "agent")
+    {
+        if (edit.CurrentIndex < state.BuiltInAgents.Count)
+        {
+            state.Config.SelectedAgent = state.BuiltInAgents[edit.CurrentIndex];
+            state.Config.CustomAgentId = null;
+            state.InlineEdit = null;
+        }
+        else
+        {
+            // "Custom agent..." selected — break out for text input
+            state.InlineEdit = null;
+            state.PendingAction = "edit_custom_agent";
+        }
+    }
+    else if (edit.FieldId == "workspace_mode")
+    {
+        if (edit.CurrentIndex < state.WorkspaceModes.Count)
+            state.Config.WorkspaceMode = state.WorkspaceModes[edit.CurrentIndex];
+        state.InlineEdit = null;
+    }
+}
+
 static void HandleShortcutKey(char ch, string focused, TuiState state, string workspaceFolderName)
 {
     switch (ch)
     {
         case 'w' when focused == "name":
-            state.Config.Name = workspaceFolderName;
-            break;
         case 'd' when focused == "name":
             state.Config.Name = workspaceFolderName;
             break;
@@ -592,6 +742,9 @@ static void HandleShortcutKey(char ch, string focused, TuiState state, string wo
             break;
         case 'r' when focused.StartsWith("kit:"):
             state.PendingAction = $"remove_{focused}";
+            break;
+        case 'a':
+            state.PendingAction = "add_kit";
             break;
     }
 }
@@ -905,10 +1058,27 @@ class SandboxConfig
 class TuiState
 {
     public required SandboxConfig Config { get; set; }
+    public required List<AgentOption> BuiltInAgents { get; set; }
+    public required List<WorkspaceMode> WorkspaceModes { get; set; }
     public int FocusIndex { get; set; }
     public required List<string> RecentUrls { get; set; }
     public required HashSet<string> FetchedRepos { get; set; }
     public string? PendingAction { get; set; }
+    public InlineEditState? InlineEdit { get; set; }
+}
+
+class InlineEditState
+{
+    public required string FieldId { get; set; }
+
+    // Text editing (non-null = in text edit mode)
+    public string? TextBuffer { get; set; }
+    public string TextOriginal { get; set; } = "";
+
+    // Selection editing (non-null = in selection edit mode)
+    public List<string>? OptionLabels { get; set; }
+    public int CurrentIndex { get; set; }
+    public int OriginalIndex { get; set; }
 }
 
 record KitEntry(string Url, string DisplayName);
