@@ -6,6 +6,7 @@ using System.CommandLine;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Spectre.Console;
+using Spectre.Console.Rendering;
 
 var rootCommand = new RootCommand("An interactive CLI for creating Docker Sandboxes using `sbx`");
 rootCommand.SetAction(async (ParseResult parseResult, CancellationToken ct) =>
