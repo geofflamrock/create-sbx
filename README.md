@@ -1,6 +1,6 @@
 # create-sbx
 
-An interactive CLI for creating [Docker Sandboxes](https://docs.docker.com/ai/sandboxes).
+An interactive TUI for creating [Docker Sandboxes](https://docs.docker.com/ai/sandboxes).
 
 ## Install
 

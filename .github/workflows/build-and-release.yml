@@ -60,7 +60,7 @@ jobs:
             BRANCH="${{ github.ref_name }}"
             VERSION="0.0.0-${BRANCH//[^a-zA-Z0-9-]/-}"
           fi
-          dotnet publish create-sbx.cs -r ${{ matrix.rid }} -o ./output -p:Version="$VERSION"
+          dotnet publish create-sbx.csproj -r ${{ matrix.rid }} -o ./output -p:Version="$VERSION"
 
       - name: Verify --version
         shell: bash
