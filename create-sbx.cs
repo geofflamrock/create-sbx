@@ -309,8 +309,14 @@ static List<string> PromptForWorkspaceDirectories(List<string> recentWorkspaceDi
         var directory = PromptForWorkspaceDirectory(recentWorkspaceDirectories);
         AddRecentWorkspaceDirectory(recentWorkspaceDirectories, directory);
 
-        var readOnly = AnsiConsole.Confirm($"Mount [green]{Markup.Escape(directory)}[/] as read-only?", false);
-        directories.Add(readOnly ? $"{directory}:ro" : directory);
+        var mountMode = AnsiConsole.Prompt(
+            new SelectionPrompt<MountMode>()
+                .Title($"Mount [green]{Markup.Escape(directory)}[/] as:")
+                .AddChoices(
+                    new MountMode("Read/write", false),
+                    new MountMode("Read-only", true))
+                .UseConverter(m => m.Name));
+        directories.Add(mountMode.ReadOnly ? $"{directory}:ro" : directory);
     } while (AnsiConsole.Confirm("Add another workspace directory?", false));
 
     return directories;
@@ -647,6 +653,7 @@ static string? ParseDescription(string yaml)
 record AgentOption(string Id, string DisplayName, string? Description);
 record Kit(string? Directory, string DisplayName, string? Description);
 record WorkspaceMode(string Name, string Description, bool UseClone);
+record MountMode(string Name, bool ReadOnly);
 record TemplateSourceOption(TemplateSource Source, string DisplayName);
 record TemplateConfig(TemplateSource Source, string ImageName, string? DockerfilePath, string? DockerContext, string? Branch = null);
 enum TemplateSource { Registry, GitRepo, Local }
