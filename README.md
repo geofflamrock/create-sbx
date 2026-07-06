@@ -4,7 +4,7 @@ An interactive CLI for creating [Docker Sandboxes](https://docs.docker.com/ai/sa
 
 ## Features
 
-Configure the following options when creating a sandbox:
+Supports the following options when creating a sandbox:
 - **Sandbox name**: Defaults to the current directory name.
 - **Agent**: Select from the standard list of agents available in `sbx` or enter a custom agent identifier (from a kit).
 - **Workspace directory**: The local directory to mount, defaults to `.`.
