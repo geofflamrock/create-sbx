@@ -55,6 +55,9 @@ async Task<int> RunAsync()
         new TextPrompt<string>("Enter the [green]working directory[/]:")
             .DefaultValue("."));
 
+    var recentWorkspaceFolders = LoadRecentWorkspaceFolders();
+    var additionalWorkspaceFolders = PromptForWorkspaceFolders(recentWorkspaceFolders);
+
     var workspaceMode = AnsiConsole.Prompt(
         new SelectionPrompt<WorkspaceMode>()
             .Title("Select [green]workspace mode[/]:")
@@ -81,7 +84,7 @@ async Task<int> RunAsync()
         AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/] will be built before creating the sandbox.[/]");
         AnsiConsole.WriteLine();
     }
-    PrintSbxCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir);
+    PrintSbxCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir, additionalWorkspaceFolders);
     AnsiConsole.WriteLine();
 
     if (AnsiConsole.Confirm("Create the sandbox?"))
@@ -109,11 +112,12 @@ async Task<int> RunAsync()
         if (workspaceMode.UseClone) sbxArgs.Add("--clone");
         sbxArgs.Add(agentId);
         sbxArgs.Add(workDir);
+        foreach (var folder in additionalWorkspaceFolders) sbxArgs.Add(folder);
 
         if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
         {
             AnsiConsole.WriteLine();
-            PrintSbxCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir);
+            PrintSbxCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir, additionalWorkspaceFolders);
         }
 
         AnsiConsole.WriteLine();
@@ -228,7 +232,7 @@ static async Task<TemplateConfig?> PromptForTemplate(List<string> recentUrls, Ha
 static async Task<List<string>> PromptForKits(List<string> recentUrls, HashSet<string> fetchedRepos)
 {
     var allKitUrls = new List<string>();
-    if (!AnsiConsole.Confirm("Add a kit?"))
+    if (!AnsiConsole.Confirm("Add a kit?", false))
         return allKitUrls;
 
     do
@@ -289,22 +293,63 @@ static async Task<List<string>> PromptForKits(List<string> recentUrls, HashSet<s
                         : string.IsNullOrEmpty(refFragment) ? gitUrl : $"{gitUrl}#{refFragment.TrimStart('&')}");
             }
         }
-    } while (AnsiConsole.Confirm("Add another kit?"));
+    } while (AnsiConsole.Confirm("Add another kit?", false));
 
     return allKitUrls;
 }
 
-static void AddRecentUrl(List<string> urls, string url)
+static List<string> PromptForWorkspaceFolders(List<string> recentWorkspaceFolders)
 {
-    urls.Remove(url);
-    urls.Insert(0, url);
-    while (urls.Count > 10) urls.RemoveAt(urls.Count - 1);
-    SaveRecentUrls(urls);
+    var folders = new List<string>();
+    if (!AnsiConsole.Confirm("Add additional workspace folders?", false))
+        return folders;
+
+    do
+    {
+        var folder = PromptForWorkspaceFolder(recentWorkspaceFolders);
+        folders.Add(folder);
+        AddRecentWorkspaceFolder(recentWorkspaceFolders, folder);
+    } while (AnsiConsole.Confirm("Add another workspace folder?", false));
+
+    return folders;
 }
 
-static void PrintSbxCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir)
+static string PromptForWorkspaceFolder(List<string> recentWorkspaceFolders)
 {
-    PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir));
+    const string NewFolderOption = "Enter path";
+
+    if (recentWorkspaceFolders.Count > 0)
+    {
+        var choice = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Select an [green]additional workspace folder[/]:")
+                .AddChoices([.. recentWorkspaceFolders, NewFolderOption]));
+
+        if (choice != NewFolderOption)
+            return choice;
+    }
+
+    var folder = AnsiConsole.Ask<string>("Enter the [green]path[/] to the additional workspace folder:");
+    return folder.Trim();
+}
+
+static void AddRecentUrl(List<string> urls, string url) =>
+    AddRecentEntry(urls, url, SaveRecentUrls);
+
+static void AddRecentWorkspaceFolder(List<string> folders, string folder) =>
+    AddRecentEntry(folders, folder, SaveRecentWorkspaceFolders);
+
+static void AddRecentEntry(List<string> entries, string entry, Action<List<string>> save)
+{
+    entries.Remove(entry);
+    entries.Insert(0, entry);
+    while (entries.Count > 10) entries.RemoveAt(entries.Count - 1);
+    save(entries);
+}
+
+static void PrintSbxCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir, List<string> additionalWorkspaceFolders)
+{
+    PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir, additionalWorkspaceFolders));
 }
 
 static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
@@ -326,7 +371,7 @@ static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
     return url.Trim().TrimEnd('/');
 }
 
-static string BuildDisplayCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir)
+static string BuildDisplayCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir, List<string> additionalWorkspaceFolders)
 {
     var parts = new List<string> { "sbx create", $"--name \"{name}\"" };
     if (templateName is not null) parts.Add($"--template \"{templateName}\"");
@@ -334,6 +379,8 @@ static string BuildDisplayCommand(string name, string? templateName, List<string
     if (workspaceMode.UseClone) parts.Add("--clone");
     parts.Add(agentId);
     parts.Add($"\"{workDir}\"");
+    if (additionalWorkspaceFolders.Count > 0)
+        parts.Add(string.Join(" ", additionalWorkspaceFolders.Select(f => $"\"{f}\"")));
     return string.Join(" ", parts);
 }
 
@@ -343,22 +390,28 @@ static void PrintCommand(string command)
     AnsiConsole.MarkupLine($"[blue]{Markup.Escape(command)}[/]");
 }
 
-static string GetRecentUrlsPath() =>
-    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "create-sbx", "recent-urls.txt");
+static string GetRecentEntriesPath(string fileName) =>
+    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "create-sbx", fileName);
 
-static List<string> LoadRecentUrls()
+static List<string> LoadRecentEntries(string fileName)
 {
-    var path = GetRecentUrlsPath();
+    var path = GetRecentEntriesPath(fileName);
     if (!File.Exists(path)) return [];
     return [.. File.ReadAllLines(path).Where(l => !string.IsNullOrWhiteSpace(l))];
 }
 
-static void SaveRecentUrls(List<string> urls)
+static void SaveRecentEntries(string fileName, List<string> entries)
 {
-    var path = GetRecentUrlsPath();
+    var path = GetRecentEntriesPath(fileName);
     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-    File.WriteAllLines(path, urls);
+    File.WriteAllLines(path, entries);
 }
+
+static List<string> LoadRecentUrls() => LoadRecentEntries("recent-urls.txt");
+static void SaveRecentUrls(List<string> urls) => SaveRecentEntries("recent-urls.txt", urls);
+
+static List<string> LoadRecentWorkspaceFolders() => LoadRecentEntries("recent-workspace-folders.txt");
+static void SaveRecentWorkspaceFolders(List<string> folders) => SaveRecentEntries("recent-workspace-folders.txt", folders);
 
 static (string? owner, string? repo) ParseGitHubUrl(string url)
 {
