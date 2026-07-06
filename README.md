@@ -22,13 +22,13 @@ Once installed, run `create-sbx` from anywhere.
 
 `create-sbx` walks you through an interactive prompt to configure a sandbox:
 
-- **Sandbox name** - defaults to the current directory name
-- **Agent** - `claude`, `codex`, `copilot`, `cursor`, `droid`, `gemini`, `kiro`, `opencode`, `docker-agent`, `shell` (agent-less), or a custom agent identifier
-- **Workspace directory** - the local directory to mount, defaults to `.`
-- **Workspace mode** - `Direct` (mount the host directory) or `Clone` (clone the repository into the sandbox)
-- **Template** (optional) - a Docker image from a registry, or a Dockerfile from a Git repository or local path, built before the sandbox is created
-- **Kits** (optional) - one or more kits selected from a Git repository, added to the sandbox
-- **Additional workspace directories** (optional) - extra directories to mount, each as read/write or read-only
+- **Sandbox name**: Defaults to the current directory name.
+- **Agent**: Select from the standard list of agents available in `sbx` or enter a custom agent identifier (from a kit).
+- **Workspace directory**: The local directory to mount, defaults to `.`.
+- **Workspace mode**: `Direct` (mount the host directory) or `Clone` (clone the repository into the sandbox)
+- **Template** (optional): Select a Docker image from a registry, or build a Dockerfile from a Git repository/local path.
+- **Kits** (optional): Select kits to add from a Git repository.
+- **Additional workspace directories** (optional): Extra directories to mount, each as read/write or read-only.
 
 ## Requirements
 
