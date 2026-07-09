@@ -6,7 +6,9 @@ namespace CreateSbx.Screens;
 
 /// <summary>Shared "pick a recent URL or enter a new one, then enter a branch" sub-flow used by
 /// both the Template (git repository) and Kits fields. On success, calls
-/// <paramref name="onResolved"/> with the parsed owner/repo/branch.</summary>
+/// <paramref name="onResolved"/> with the parsed owner/repo/branch. Calls
+/// <paramref name="onAnswered"/> as each question is answered, so the caller can show it as a
+/// breadcrumb while later questions are being asked.</summary>
 internal sealed class RepoUrlStep : IStep
 {
     private const string EnterUrlSentinel = "Enter URL";
@@ -14,13 +16,19 @@ internal sealed class RepoUrlStep : IStep
     private readonly SandboxConfig _config;
     private readonly string _purpose;
     private readonly Action<ApplicationContext, string, string, string> _onResolved;
+    private readonly Action<string, string> _onAnswered;
     private IStep _current;
 
-    public RepoUrlStep(SandboxConfig config, string purpose, Action<ApplicationContext, string, string, string> onResolved)
+    public RepoUrlStep(
+        SandboxConfig config,
+        string purpose,
+        Action<ApplicationContext, string, string, string> onResolved,
+        Action<string, string>? onAnswered = null)
     {
         _config = config;
         _purpose = purpose;
         _onResolved = onResolved;
+        _onAnswered = onAnswered ?? ((_, _) => { });
         _current = BuildUrlSelectStep();
     }
 
@@ -72,14 +80,21 @@ internal sealed class RepoUrlStep : IStep
         }
 
         RecentUrlsStore.Add(_config.RecentUrls, url);
+        _onAnswered("Repository", $"{owner}/{repo}");
 
         _current = new TextFieldEditorScreen(
             "Enter branch (leave blank for default)",
             "",
-            (context2, branch) => _onResolved(context2, owner, repo, branch));
+            (context2, branch) =>
+            {
+                _onAnswered("Branch", string.IsNullOrEmpty(branch) ? "(default)" : branch);
+                _onResolved(context2, owner, repo, branch);
+            });
     }
 
     public void OnMessage(ApplicationContext context, ApplicationMessage message) => _current.OnMessage(context, message);
 
     public void Render(RenderContext context) => _current.Render(context);
+
+    public IEnumerable<KeyBinding> Help() => _current.Help();
 }

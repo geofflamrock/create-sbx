@@ -2,13 +2,14 @@ using CreateSbx.Widgets;
 
 namespace CreateSbx.Screens;
 
-/// <summary>A single-line text input step. Used standalone (pushed directly, replacing the
-/// current screen) for simple fields like Name/Working directory, and embedded as one step of a
-/// composite field screen (e.g. entering a custom agent id, an image name, a branch). Escape
-/// always pops back to the previous screen; Enter validates (if a validator was supplied) and,
-/// once valid, hands control back to the caller via <paramref name="onConfirm"/> — which decides
-/// whether that means popping back or advancing to another step.</summary>
-internal sealed class TextFieldEditorScreen : Screen, IStep
+/// <summary>A single-line text input step, rendered inline (label, then the input on the same
+/// row — no box). Used standalone (wrapped in <see cref="SimpleFieldScreen"/>) for simple fields
+/// like Name/Working directory, and embedded as one step of a composite field screen (e.g.
+/// entering a custom agent id, an image name, a branch). Escape always pops back to the previous
+/// screen; Enter validates (if a validator was supplied) and, once valid, hands control back to
+/// the caller via <paramref name="onConfirm"/> — which decides whether that means popping back or
+/// advancing to another step.</summary>
+internal sealed class TextFieldEditorScreen : IStep
 {
     private readonly TextBoxWidget _textBox;
     private readonly string _label;
@@ -33,7 +34,7 @@ internal sealed class TextFieldEditorScreen : Screen, IStep
         _textBox.IsFocused = true;
     }
 
-    public override void OnMessage(ApplicationContext context, ApplicationMessage message)
+    public void OnMessage(ApplicationContext context, ApplicationMessage message)
     {
         if (message is not KeyMessage key)
         {
@@ -64,16 +65,18 @@ internal sealed class TextFieldEditorScreen : Screen, IStep
         _textBox.KeyMap.HandleKey(key);
     }
 
-    public override void Render(RenderContext context)
+    public void Render(RenderContext context)
     {
         var layout = new Layout("Root")
-            .SplitRows(
-                new Layout("Label").Size(1),
-                new Layout("Input").Size(3),
-                new Layout("Footer"));
+            .SplitRows(new Layout("Row").Size(1), new Layout("Footer"));
 
-        context.Render(Paragraph.FromMarkup($"[green]{MarkupText.Escape(_label)}[/]:"), layout.GetArea(context, "Label"));
-        context.Render(new BoxWidget().Border(Border.Rounded).Inner(_textBox), layout.GetArea(context, "Input"));
+        var rowArea = layout.GetArea(context, "Row");
+        var labelText = $"{_label}: ";
+        var row = new Layout("Row")
+            .SplitColumns(new Layout("Label").Size(labelText.Length), new Layout("Input"));
+
+        context.Render(Paragraph.FromMarkup($"[green]{MarkupText.Escape(labelText)}[/]"), row.GetArea(rowArea, "Label"));
+        context.Render(_textBox, row.GetArea(rowArea, "Input"));
 
         var footer = _error is not null
             ? $"[red]{MarkupText.Escape(_error)}[/]"
@@ -83,5 +86,11 @@ internal sealed class TextFieldEditorScreen : Screen, IStep
         {
             context.Render(Paragraph.FromMarkup(footer), layout.GetArea(context, "Footer"));
         }
+    }
+
+    public IEnumerable<KeyBinding> Help()
+    {
+        yield return KeyBinding.For(Key.Escape).WithHelp("Back");
+        yield return KeyBinding.For(Key.Enter).WithHelp("Confirm");
     }
 }

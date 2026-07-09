@@ -7,11 +7,9 @@ namespace CreateSbx.Screens;
 
 /// <summary>Kits field editor: a list of added kit sources, each addable/editable through the
 /// shared repo-url + fetch + multi-select flow.</summary>
-internal sealed class KitsFieldScreen : Screen
+internal sealed class KitsFieldScreen : MultiStepScreen
 {
     private readonly SandboxConfig _config;
-    private IStep _current;
-    private IJobHandle? _activeJob;
     private KitGroup? _editingGroup;
     private string? _pendingOwner;
     private string? _pendingRepo;
@@ -20,7 +18,7 @@ internal sealed class KitsFieldScreen : Screen
     public KitsFieldScreen(SandboxConfig config)
     {
         _config = config;
-        _current = BuildGroupListStep();
+        Current = BuildGroupListStep();
     }
 
     private IStep BuildGroupListStep() => new KitGroupListStep(_config, OnAdd, OnEdit);
@@ -28,7 +26,7 @@ internal sealed class KitsFieldScreen : Screen
     private void OnAdd(ApplicationContext context)
     {
         _editingGroup = null;
-        _current = new RepoUrlStep(_config, "kit", OnRepoResolved);
+        Current = new RepoUrlStep(_config, "kit", OnRepoResolved);
     }
 
     private void OnEdit(ApplicationContext context, KitGroup group)
@@ -42,8 +40,12 @@ internal sealed class KitsFieldScreen : Screen
         _pendingOwner = owner;
         _pendingRepo = repo;
         _pendingBranch = branch;
-        _current = new BusyStep($"Fetching {owner}/{repo}...");
-        _activeJob = context.StartJob(async job =>
+
+        Breadcrumbs.Add($"Repository: {MarkupText.Escape(owner)}/{MarkupText.Escape(repo)}");
+        Breadcrumbs.Add($"Branch: {MarkupText.Escape(string.IsNullOrEmpty(branch) ? "(default)" : branch)}");
+
+        Current = new BusyStep($"Fetching {owner}/{repo}...");
+        ActiveJob = context.StartJob(async job =>
         {
             try
             {
@@ -63,12 +65,12 @@ internal sealed class KitsFieldScreen : Screen
         var kits = RepoService.FindKits(cloneDir);
         if (kits.Count == 0)
         {
-            _current = new MessageStep("No kits found in the repository.", _ => _current = BuildGroupListStep());
+            Current = new MessageStep("No kits found in the repository.", _ => Reset());
             return;
         }
 
         var editing = _editingGroup;
-        _current = new MultiSelectEditorScreen<Kit>(
+        Current = new MultiSelectEditorScreen<Kit>(
             "Select the kits to include",
             kits,
             FormatKit,
@@ -96,42 +98,38 @@ internal sealed class KitsFieldScreen : Screen
                     });
                 }
 
-                _current = BuildGroupListStep();
+                Reset();
             },
             isInitiallyChecked: kit => editing?.SelectedKits.Any(k => k.Directory == kit.Directory) ?? false);
+    }
+
+    private void Reset()
+    {
+        Breadcrumbs.Clear();
+        Current = BuildGroupListStep();
     }
 
     private static string FormatKit(Kit kit) => kit.Description is not null
         ? $"{MarkupText.Escape(kit.DisplayName)} [grey]- {MarkupText.Escape(kit.Description)}[/]"
         : MarkupText.Escape(kit.DisplayName);
 
-    public override void OnLeave(ApplicationContext context) => _activeJob?.Cancel();
-
-    public override void OnMessage(ApplicationContext context, ApplicationMessage message)
+    protected override bool HandleMessage(ApplicationContext context, ApplicationMessage message)
     {
-        if (_current is BusyStep)
+        if (Current is not BusyStep)
         {
-            switch (message)
-            {
-                case RepoFetchSucceededMessage success:
-                    HandleRepoFetched(success.CloneDir);
-                    return;
-                case RepoFetchFailedMessage failure:
-                    _current = new MessageStep($"Failed to fetch repository: {failure.Error}", _ => _current = BuildGroupListStep());
-                    return;
-            }
+            return false;
         }
 
-        _current.OnMessage(context, message);
-    }
-
-    public override void Update(FrameInfo frame, IRenderBounds bounds)
-    {
-        if (_current is BusyStep busy)
+        switch (message)
         {
-            busy.Update(frame);
+            case RepoFetchSucceededMessage success:
+                HandleRepoFetched(success.CloneDir);
+                return true;
+            case RepoFetchFailedMessage failure:
+                Current = new MessageStep($"Failed to fetch repository: {failure.Error}", _ => Reset());
+                return true;
+            default:
+                return false;
         }
     }
-
-    public override void Render(RenderContext context) => _current.Render(context);
 }

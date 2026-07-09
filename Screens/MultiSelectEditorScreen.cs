@@ -2,10 +2,10 @@ using CreateSbx.Widgets;
 
 namespace CreateSbx.Screens;
 
-/// <summary>A checklist step. Space toggles the highlighted row, Escape pops back to the previous screen
-/// (discarding the selection and returning to the previous screen), Enter hands the checked items back via
+/// <summary>A checklist step. Space toggles the highlighted row, Escape pops back to the previous
+/// screen (discarding the selection), Enter hands the checked items back via
 /// <paramref name="onConfirm"/>.</summary>
-internal sealed class MultiSelectEditorScreen<T> : Screen, IStep
+internal sealed class MultiSelectEditorScreen<T> : IStep
 {
     private readonly string _label;
     private readonly ListWidget<ToggleRow<T>> _list;
@@ -32,7 +32,7 @@ internal sealed class MultiSelectEditorScreen<T> : Screen, IStep
             .SelectedIndex(rows.Count == 0 ? null : 0);
     }
 
-    public override void OnMessage(ApplicationContext context, ApplicationMessage message)
+    public void OnMessage(ApplicationContext context, ApplicationMessage message)
     {
         if (message is not KeyMessage key)
         {
@@ -61,18 +61,23 @@ internal sealed class MultiSelectEditorScreen<T> : Screen, IStep
         _list.KeyMap.HandleKey(key);
     }
 
-    public override void Render(RenderContext context)
+    public void Render(RenderContext context)
     {
         var layout = new Layout("Root")
-            .SplitRows(
-                new Layout("Label").Size(1),
-                new Layout("List"),
-                new Layout("Footer").Size(1));
+            .SplitRows(new Layout("Label").Size(1), new Layout("List"));
 
         context.Render(Paragraph.FromMarkup($"[green]{MarkupText.Escape(_label)}[/]:"), layout.GetArea(context, "Label"));
         context.Render(_list, layout.GetArea(context, "List"));
-        context.Render(
-            Paragraph.FromMarkup("[grey][[Space]] toggle  [[Enter]] confirm[/]"),
-            layout.GetArea(context, "Footer"));
+    }
+
+    public IEnumerable<KeyBinding> Help()
+    {
+        yield return KeyBinding.For(Key.Escape).WithHelp("Back");
+        yield return KeyBinding.For(Key.Space).WithHelp("Toggle");
+        yield return KeyBinding.For(Key.Enter).WithHelp("Confirm");
+        foreach (var binding in _list.KeyMap.Help())
+        {
+            yield return binding;
+        }
     }
 }

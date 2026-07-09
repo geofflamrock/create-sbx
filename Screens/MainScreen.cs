@@ -36,10 +36,11 @@ internal sealed class MainScreen : Screen
 
         _layout = new Layout("Root")
             .SplitRows(
-                new Layout("Fields").Size(rows.Count),
+                new Layout("Title").Size(2),
                 new Layout("Preview").Size(3),
-                new Layout("Filler"),
-                new Layout("Help").Size(1));
+                new Layout("Fields").Size(rows.Count),
+                new Layout("Help").Size(1),
+                new Layout("Filler"));
     }
 
     private List<FieldListItem> BuildRows()
@@ -168,11 +169,11 @@ internal sealed class MainScreen : Screen
         switch (selected.Id)
         {
             case FieldId.Name:
-                context.Push(new TextFieldEditorScreen("Sandbox name", _config.Name, (ctx, value) =>
+                context.Push(new SimpleFieldScreen(new TextFieldEditorScreen("Sandbox name", _config.Name, (ctx, value) =>
                 {
                     _config.Name = value;
                     ctx.Pop();
-                }));
+                })));
                 break;
 
             case FieldId.Agent:
@@ -184,15 +185,15 @@ internal sealed class MainScreen : Screen
                 break;
 
             case FieldId.WorkDir:
-                context.Push(new TextFieldEditorScreen("Working directory", _config.WorkDir, (ctx, value) =>
+                context.Push(new SimpleFieldScreen(new TextFieldEditorScreen("Working directory", _config.WorkDir, (ctx, value) =>
                 {
                     _config.WorkDir = value;
                     ctx.Pop();
-                }));
+                })));
                 break;
 
             case FieldId.WorkspaceMode:
-                context.Push(new SingleSelectEditorScreen<WorkspaceModeOption>(
+                context.Push(new SimpleFieldScreen(new SingleSelectEditorScreen<WorkspaceModeOption>(
                     "Select workspace mode",
                     SandboxConfig.WorkspaceModes,
                     m => $"{m.Name} [grey]- {MarkupText.Escape(m.Description)}[/]",
@@ -201,7 +202,7 @@ internal sealed class MainScreen : Screen
                         _config.WorkspaceMode = mode;
                         ctx.Pop();
                     },
-                    SandboxConfig.WorkspaceModes.ToList().IndexOf(_config.WorkspaceMode)));
+                    SandboxConfig.WorkspaceModes.ToList().IndexOf(_config.WorkspaceMode))));
                 break;
 
             case FieldId.Template:
@@ -280,15 +281,20 @@ internal sealed class MainScreen : Screen
         var visibleLogLines = Math.Clamp(_log.Count, 0, MaxVisibleLogLines);
         _layout.GetLayout("Preview").Size(2 + 1 + visibleLogLines);
 
-        context.Render(_fields, _layout.GetArea(context, "Fields"));
+        context.Render(
+            Paragraph.FromMarkup("[bold cyan]create-sbx[/] [grey]— create a Docker sandbox[/]"),
+            _layout.GetArea(context, "Title"));
 
         context.Render(
             new BoxWidget()
                 .Border(Border.Rounded)
+                .Style(Color.Grey)
                 .TitlePadding(1)
                 .MarkupTitle("[bold]Preview[/]")
                 .Inner(new PaddingWidget(new Padding(1, 0), _previewContent)),
             _layout.GetArea(context, "Preview"));
+
+        context.Render(_fields, _layout.GetArea(context, "Fields"));
 
         context.Render(new HelpWidget(_keyMap, _fields.KeyMap).LeftAligned(), _layout.GetArea(context, "Help"));
     }

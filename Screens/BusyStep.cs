@@ -30,4 +30,9 @@ internal sealed class BusyStep : IStep
         context.Render(_spinner, layout.GetArea(context, "Spinner"));
         context.Render(Paragraph.FromMarkup($"[grey]{MarkupText.Escape(_text)}[/]"), layout.GetArea(context, "Text"));
     }
+
+    public IEnumerable<KeyBinding> Help()
+    {
+        yield return KeyBinding.For(Key.Escape).WithHelp("Back");
+    }
 }

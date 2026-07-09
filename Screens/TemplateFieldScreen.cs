@@ -8,19 +8,17 @@ namespace CreateSbx.Screens;
 /// <summary>Template field editor: None / a registry image / a Dockerfile from a git repository
 /// / a local Dockerfile. The git-repository path fetches the repo as a background job and lets
 /// the user pick one of the discovered Dockerfiles.</summary>
-internal sealed class TemplateFieldScreen : Screen
+internal sealed class TemplateFieldScreen : MultiStepScreen
 {
     private readonly SandboxConfig _config;
     private readonly Action<ApplicationContext, TemplateConfig?> _onConfirm;
-    private IStep _current;
-    private IJobHandle? _activeJob;
     private string? _pendingBranch;
 
     public TemplateFieldScreen(SandboxConfig config, Action<ApplicationContext, TemplateConfig?> onConfirm)
     {
         _config = config;
         _onConfirm = onConfirm;
-        _current = BuildSourceSelectStep();
+        Current = BuildSourceSelectStep();
     }
 
     private IStep BuildSourceSelectStep()
@@ -38,17 +36,22 @@ internal sealed class TemplateFieldScreen : Screen
                         _onConfirm(context, null);
                         break;
                     case TemplateSource.Registry:
-                        _current = BuildImageNameStep();
+                        Breadcrumbs.Add($"Template source: {FormatSource(source)}");
+                        Current = BuildImageNameStep();
                         break;
                     case TemplateSource.GitRepo:
-                        _current = new RepoUrlStep(_config, "template", OnGitRepoResolved);
+                        Breadcrumbs.Add($"Template source: {FormatSource(source)}");
+                        Current = new RepoUrlStep(_config, "template", OnGitRepoResolved, AddBreadcrumb);
                         break;
                     case TemplateSource.Local:
-                        _current = BuildLocalPathStep();
+                        Breadcrumbs.Add($"Template source: {FormatSource(source)}");
+                        Current = BuildLocalPathStep();
                         break;
                 }
             });
     }
+
+    private void AddBreadcrumb(string label, string value) => Breadcrumbs.Add($"{label}: {MarkupText.Escape(value)}");
 
     private static string FormatSource(TemplateSource? source) => source switch
     {
@@ -86,8 +89,8 @@ internal sealed class TemplateFieldScreen : Screen
     private void OnGitRepoResolved(ApplicationContext context, string owner, string repo, string branch)
     {
         _pendingBranch = branch;
-        _current = new BusyStep($"Fetching {owner}/{repo}...");
-        _activeJob = context.StartJob(async job =>
+        Current = new BusyStep($"Fetching {owner}/{repo}...");
+        ActiveJob = context.StartJob(async job =>
         {
             try
             {
@@ -107,11 +110,11 @@ internal sealed class TemplateFieldScreen : Screen
         var dockerfiles = RepoService.FindDockerfiles(cloneDir);
         if (dockerfiles.Count == 0)
         {
-            _current = new MessageStep("No Dockerfiles found in the repository.", _ => _current = BuildSourceSelectStep());
+            Current = new MessageStep("No Dockerfiles found in the repository.", _ => Reset());
             return;
         }
 
-        _current = new SingleSelectEditorScreen<string>(
+        Current = new SingleSelectEditorScreen<string>(
             "Select a Dockerfile",
             dockerfiles,
             MarkupText.Escape,
@@ -123,35 +126,31 @@ internal sealed class TemplateFieldScreen : Screen
             });
     }
 
+    private void Reset()
+    {
+        Breadcrumbs.Clear();
+        Current = BuildSourceSelectStep();
+    }
+
     private static string GenerateImageName() => $"create-sbx-{Guid.NewGuid().ToString("N")[..8]}";
 
-    public override void OnLeave(ApplicationContext context) => _activeJob?.Cancel();
-
-    public override void OnMessage(ApplicationContext context, ApplicationMessage message)
+    protected override bool HandleMessage(ApplicationContext context, ApplicationMessage message)
     {
-        if (_current is BusyStep)
+        if (Current is not BusyStep)
         {
-            switch (message)
-            {
-                case RepoFetchSucceededMessage success:
-                    HandleGitRepoFetched(success.CloneDir);
-                    return;
-                case RepoFetchFailedMessage failure:
-                    _current = new MessageStep($"Failed to fetch repository: {failure.Error}", _ => _current = BuildSourceSelectStep());
-                    return;
-            }
+            return false;
         }
 
-        _current.OnMessage(context, message);
-    }
-
-    public override void Update(FrameInfo frame, IRenderBounds bounds)
-    {
-        if (_current is BusyStep busy)
+        switch (message)
         {
-            busy.Update(frame);
+            case RepoFetchSucceededMessage success:
+                HandleGitRepoFetched(success.CloneDir);
+                return true;
+            case RepoFetchFailedMessage failure:
+                Current = new MessageStep($"Failed to fetch repository: {failure.Error}", _ => Reset());
+                return true;
+            default:
+                return false;
         }
     }
-
-    public override void Render(RenderContext context) => _current.Render(context);
 }

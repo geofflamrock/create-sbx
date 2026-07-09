@@ -74,12 +74,20 @@ internal sealed class KitGroupListStep : IStep
     public void Render(RenderContext context)
     {
         var layout = new Layout("Root")
-            .SplitRows(new Layout("Label").Size(1), new Layout("List"), new Layout("Footer").Size(1));
+            .SplitRows(new Layout("Label").Size(1), new Layout("List"));
 
         context.Render(Paragraph.FromMarkup("[green]Kit sources[/]:"), layout.GetArea(context, "Label"));
         context.Render(_list, layout.GetArea(context, "List"));
-        context.Render(
-            Paragraph.FromMarkup("[grey][[Enter]] add/edit  [[Del/d]] remove  [[Esc]] done[/]"),
-            layout.GetArea(context, "Footer"));
+    }
+
+    public IEnumerable<KeyBinding> Help()
+    {
+        yield return KeyBinding.For(Key.Escape).WithHelp("Back");
+        yield return KeyBinding.For(Key.Enter).WithHelp("Add/Edit");
+        yield return KeyBinding.Combine(KeyBinding.For(Key.Delete), KeyBinding.For('d')).WithHelp("Remove");
+        foreach (var binding in _list.KeyMap.Help())
+        {
+            yield return binding;
+        }
     }
 }

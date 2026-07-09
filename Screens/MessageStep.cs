@@ -33,7 +33,11 @@ internal sealed class MessageStep : IStep
     public void Render(RenderContext context)
     {
         context.Render(
-            Paragraph.FromMarkup($"[yellow]{MarkupText.Escape(_message)}[/]\n\n[grey]Press any key to go back[/]")
-                .Centered());
+            Paragraph.FromMarkup($"[yellow]{MarkupText.Escape(_message)}[/]\n\n[grey]Press any key to go back[/]"));
+    }
+
+    public IEnumerable<KeyBinding> Help()
+    {
+        yield return KeyBinding.For(Key.Escape).WithHelp("Back");
     }
 }

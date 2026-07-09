@@ -2,10 +2,10 @@ using CreateSbx.Widgets;
 
 namespace CreateSbx.Screens;
 
-/// <summary>A single-select list step. Escape pops back to the previous screen; Enter hands the highlighted
-/// item back via <paramref name="onSelect"/>, which decides whether that pops back or
+/// <summary>A single-select list step. Escape pops back to the previous screen; Enter hands the
+/// highlighted item back via <paramref name="onSelect"/>, which decides whether that pops back or
 /// advances to another step.</summary>
-internal sealed class SingleSelectEditorScreen<T> : Screen, IStep
+internal sealed class SingleSelectEditorScreen<T> : IStep
 {
     private readonly string _label;
     private readonly ListWidget<SelectableRow<T>> _list;
@@ -29,7 +29,7 @@ internal sealed class SingleSelectEditorScreen<T> : Screen, IStep
             .SelectedIndex(rows.Count == 0 ? null : Math.Clamp(selectedIndex, 0, rows.Count - 1));
     }
 
-    public override void OnMessage(ApplicationContext context, ApplicationMessage message)
+    public void OnMessage(ApplicationContext context, ApplicationMessage message)
     {
         if (message is not KeyMessage key)
         {
@@ -55,7 +55,7 @@ internal sealed class SingleSelectEditorScreen<T> : Screen, IStep
         _list.KeyMap.HandleKey(key);
     }
 
-    public override void Render(RenderContext context)
+    public void Render(RenderContext context)
     {
         var layout = new Layout("Root")
             .SplitRows(
@@ -64,5 +64,15 @@ internal sealed class SingleSelectEditorScreen<T> : Screen, IStep
 
         context.Render(Paragraph.FromMarkup($"[green]{MarkupText.Escape(_label)}[/]:"), layout.GetArea(context, "Label"));
         context.Render(_list, layout.GetArea(context, "List"));
+    }
+
+    public IEnumerable<KeyBinding> Help()
+    {
+        yield return KeyBinding.For(Key.Escape).WithHelp("Back");
+        yield return KeyBinding.For(Key.Enter).WithHelp("Select");
+        foreach (var binding in _list.KeyMap.Help())
+        {
+            yield return binding;
+        }
     }
 }
