@@ -32,6 +32,7 @@ internal sealed class TextFieldEditorScreen : IStep
         _onConfirm = onConfirm;
         _textBox = new TextBoxWidget().AsSingleLine().Text(initialValue).Placeholder(placeholder ?? "");
         _textBox.IsFocused = true;
+        _textBox.MoveToEnd();
     }
 
     public void OnMessage(ApplicationContext context, ApplicationMessage message)

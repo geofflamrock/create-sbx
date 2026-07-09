@@ -10,7 +10,8 @@ internal sealed class MainScreenKeyMap : IKeyMap
 
     public KeyBinding Remove { get; set; } = KeyBinding.Combine(KeyBinding.For(Key.Delete), KeyBinding.For('d'));
 
-    public KeyBinding Quit { get; set; } = KeyBinding.For(KeyPress.For('c').WithCtrl()).WithHelp("Exit");
+    public KeyBinding Quit { get; set; } =
+        KeyBinding.Combine(KeyBinding.For(KeyPress.For('c').WithCtrl()), KeyBinding.For(Key.Escape)).WithHelp("Exit");
 
     /// <summary>Set by <see cref="MainScreen"/> each render to reflect what's currently
     /// selected — the remove shortcut only makes sense (and only shows up in the help bar) when

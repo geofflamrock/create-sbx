@@ -7,11 +7,8 @@ namespace CreateSbx.Screens;
 
 internal sealed class MainScreen : ShellScreen
 {
-    private const int MaxLogLines = 500;
-
     private readonly MainScreenKeyMap _keyMap = new();
     private int _selectedIndex;
-    private IJobHandle? _createJob;
 
     public int? ExitCode { get; private set; }
 
@@ -78,18 +75,12 @@ internal sealed class MainScreen : ShellScreen
 
     public override void OnMessage(ApplicationContext context, ApplicationMessage message)
     {
-        switch (message)
+        if (message is SbxProcessFinishedMessage finished)
         {
-            case LogMessage log:
-                AppendLog(log.Text);
-                return;
-            case SbxProcessFinishedMessage finished:
-                ExitCode = finished.ExitCode;
-                context.Push(new ResultScreen(Config.Log, finished.ExitCode));
-                return;
-            case JobFailedMessage failed:
-                AppendLog($"Error: {failed.Exception.Message}");
-                return;
+            // CreateScreen (still further up the stack, or already gone once the app quits) owns
+            // showing this — we only need the exit code to hand back as the process's own.
+            ExitCode = finished.ExitCode;
+            return;
         }
 
         if (message is not KeyMessage key)
@@ -224,59 +215,12 @@ internal sealed class MainScreen : ShellScreen
                 break;
 
             case FieldId.Create:
-                StartCreate(context);
+                context.Push(new CreateScreen(Config));
                 break;
 
             case FieldId.Exit:
                 context.Quit();
                 break;
-        }
-    }
-
-    private void StartCreate(ApplicationContext context)
-    {
-        if (_createJob is not null)
-        {
-            return;
-        }
-
-        var template = Config.Template;
-
-        _createJob = context.StartJob(async job =>
-        {
-            try
-            {
-                string? effectiveTemplateName = template?.Source == TemplateSource.Registry ? template.ImageName : null;
-
-                if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
-                {
-                    effectiveTemplateName = await DockerService.BuildAndLoadDockerImageAsync(
-                        template, line => job.Broadcast(new LogMessage(line)));
-                }
-
-                var args = SbxCommandBuilder.BuildArgs(Config, effectiveTemplateName);
-                job.Broadcast(new LogMessage($"Creating sandbox {Config.Name}..."));
-                job.Broadcast(new LogMessage("sbx " + string.Join(' ', args)));
-
-                var exitCode = await ProcessRunner.RunStreamingAsync(
-                    "sbx", args, line => job.Broadcast(new LogMessage(line)), throwOnNonZeroExit: false);
-
-                job.Broadcast(new SbxProcessFinishedMessage(exitCode));
-            }
-            catch (Exception ex)
-            {
-                job.Broadcast(new LogMessage($"Error: {ex.Message}"));
-                job.Broadcast(new SbxProcessFinishedMessage(1));
-            }
-        });
-    }
-
-    private void AppendLog(string text)
-    {
-        Config.Log.Add(text);
-        while (Config.Log.Count > MaxLogLines)
-        {
-            Config.Log.RemoveAt(0);
         }
     }
 
