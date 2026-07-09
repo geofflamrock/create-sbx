@@ -12,6 +12,8 @@ namespace CreateSbx.Screens;
 /// something and retry) or Esc exits.</summary>
 internal sealed class CreateScreen : Screen
 {
+    private const int MaxVisibleLogLines = 20;
+
     private readonly SandboxConfig _config;
     private readonly List<string> _log = [];
     private readonly ScrollViewWidget _scroller = new ScrollViewWidget().HorizontalScroll(ScrollMode.Disabled);
@@ -114,8 +116,16 @@ internal sealed class CreateScreen : Screen
             return;
         }
 
+        // Size the log to its own content (capped so a huge log can't push the message off
+        // screen) rather than letting it fill the whole viewport, so the message sits right
+        // underneath the output instead of pinned to the bottom of an otherwise-empty screen.
+        var logHeight = Math.Clamp(_log.Count, 1, MaxVisibleLogLines);
         var layout = new Layout("Root")
-            .SplitRows(new Layout("Log"), new Layout("Spacer").Size(1), new Layout("Message").Size(2));
+            .SplitRows(
+                new Layout("Log").Size(logHeight),
+                new Layout("Spacer").Size(1),
+                new Layout("Message").Size(2),
+                new Layout("Filler"));
 
         context.Render(_scroller, layout.GetArea(context, "Log"));
 
