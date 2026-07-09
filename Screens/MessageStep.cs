@@ -40,4 +40,9 @@ internal sealed class MessageStep : IStep
     {
         yield return KeyBinding.For(Key.Escape).WithHelp("Back");
     }
+
+    // Message plus a blank line plus the "press any key" prompt; message itself may still wrap
+    // onto more lines than this at render time, in which case it's clipped rather than pushing
+    // the help bar further down the screen.
+    public int PreferredHeight => _message.Split('\n').Length + 2;
 }

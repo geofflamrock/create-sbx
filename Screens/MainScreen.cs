@@ -5,52 +5,34 @@ using CreateSbx.Widgets;
 
 namespace CreateSbx.Screens;
 
-internal sealed class MainScreen : Screen
+internal sealed class MainScreen : ShellScreen
 {
     private const int MaxLogLines = 500;
-    private const int MaxVisibleLogLines = 8;
 
-    private readonly SandboxConfig _config = new(RecentUrlsStore.Load());
     private readonly ListWidget<FieldListItem> _fields;
     private readonly MainScreenKeyMap _keyMap = new();
-    private readonly List<string> _log = [];
-    private readonly ScrollViewWidget _logScroller = new ScrollViewWidget().HorizontalScroll(ScrollMode.Disabled);
-    private readonly PreviewContent _previewContent;
-    private readonly Layout _layout;
     private IJobHandle? _createJob;
 
     public int? ExitCode { get; private set; }
 
     public MainScreen()
+        : base(new SandboxConfig(RecentUrlsStore.Load()))
     {
-        var rows = BuildRows();
-        _fields = new ListWidget<FieldListItem>(rows)
+        _fields = new ListWidget<FieldListItem>(BuildRows())
             .HighlightSymbol("→ ")
             .HighlightStyle(new Style(decoration: Decoration.Bold))
             .WrapAround()
             .SelectedIndex(0);
-
-        _previewContent = new PreviewContent(
-            () => SbxCommandBuilder.BuildDisplayCommand(_config, SbxCommandBuilder.GetDisplayTemplateName(_config.Template)),
-            _logScroller);
-
-        _layout = new Layout("Root")
-            .SplitRows(
-                new Layout("Title").Size(2),
-                new Layout("Preview").Size(3),
-                new Layout("Fields").Size(rows.Count),
-                new Layout("Help").Size(1),
-                new Layout("Filler"));
     }
 
     private List<FieldListItem> BuildRows()
     {
         (FieldId Id, string Label, Func<string>? GetValue)[] fields =
         [
-            (FieldId.Name, "Name", () => _config.Name),
-            (FieldId.Agent, "Agent", () => _config.AgentId),
-            (FieldId.WorkDir, "Working directory", () => _config.WorkDir),
-            (FieldId.WorkspaceMode, "Workspace mode", () => _config.WorkspaceMode.Name),
+            (FieldId.Name, "Name", () => Config.Name),
+            (FieldId.Agent, "Agent", () => Config.AgentId),
+            (FieldId.WorkDir, "Working directory", () => Config.WorkDir),
+            (FieldId.WorkspaceMode, "Workspace mode", () => Config.WorkspaceMode.Name),
             (FieldId.Template, "Template", DescribeTemplate),
             (FieldId.Kits, "Kits", DescribeKits),
         ];
@@ -68,7 +50,7 @@ internal sealed class MainScreen : Screen
 
     private string DescribeTemplate()
     {
-        var template = _config.Template;
+        var template = Config.Template;
         if (template is null)
         {
             return "(none)";
@@ -77,22 +59,26 @@ internal sealed class MainScreen : Screen
         return template.Source switch
         {
             TemplateSource.Registry => template.ImageName,
-            TemplateSource.GitRepo => $"{Path.GetFileName(template.DockerfilePath)} (will be built)",
-            TemplateSource.Local => template.DockerfilePath!,
+            TemplateSource.GitRepo =>
+                $"{template.RepoSlug} — {Path.GetRelativePath(template.DockerContext!, template.DockerfilePath!)} (will be built)",
+            TemplateSource.Local => $"{template.DockerfilePath} (will be built)",
             _ => template.ImageName,
         };
     }
 
     private string DescribeKits()
     {
-        if (_config.KitGroups.Count == 0)
-        {
-            return "(none)";
-        }
+        var lines = Config.KitGroups
+            .SelectMany(g => g.SelectedKits.Select(k => DescribeKit(g, k)))
+            .ToList();
 
-        var kitCount = _config.KitGroups.Sum(g => g.SelectedKits.Count);
-        var sourceCount = _config.KitGroups.Count;
-        return $"{kitCount} kit{(kitCount == 1 ? "" : "s")} from {sourceCount} source{(sourceCount == 1 ? "" : "s")}";
+        return lines.Count == 0 ? "(none)" : string.Join("\n", lines);
+    }
+
+    private static string DescribeKit(KitGroup group, Kit kit)
+    {
+        var branchSuffix = string.IsNullOrEmpty(group.Branch) ? "" : $" ({group.Branch})";
+        return $"{group.Owner}/{group.Repo}{branchSuffix} — {kit.DisplayName}";
     }
 
     public override void OnMessage(ApplicationContext context, ApplicationMessage message)
@@ -104,7 +90,7 @@ internal sealed class MainScreen : Screen
                 return;
             case SbxProcessFinishedMessage finished:
                 ExitCode = finished.ExitCode;
-                context.Push(new ResultScreen(_log, finished.ExitCode));
+                context.Push(new ResultScreen(Config.Log, finished.ExitCode));
                 return;
             case JobFailedMessage failed:
                 AppendLog($"Error: {failed.Exception.Message}");
@@ -169,52 +155,52 @@ internal sealed class MainScreen : Screen
         switch (selected.Id)
         {
             case FieldId.Name:
-                context.Push(new SimpleFieldScreen(new TextFieldEditorScreen("Sandbox name", _config.Name, (ctx, value) =>
+                context.Push(new SimpleFieldScreen(Config, new TextFieldEditorScreen("Sandbox name", Config.Name, (ctx, value) =>
                 {
-                    _config.Name = value;
+                    Config.Name = value;
                     ctx.Pop();
                 })));
                 break;
 
             case FieldId.Agent:
-                context.Push(new AgentFieldScreen(_config.AgentId, (ctx, id) =>
+                context.Push(new AgentFieldScreen(Config, (ctx, id) =>
                 {
-                    _config.AgentId = id;
+                    Config.AgentId = id;
                     ctx.Pop();
                 }));
                 break;
 
             case FieldId.WorkDir:
-                context.Push(new SimpleFieldScreen(new TextFieldEditorScreen("Working directory", _config.WorkDir, (ctx, value) =>
+                context.Push(new SimpleFieldScreen(Config, new TextFieldEditorScreen("Working directory", Config.WorkDir, (ctx, value) =>
                 {
-                    _config.WorkDir = value;
+                    Config.WorkDir = value;
                     ctx.Pop();
                 })));
                 break;
 
             case FieldId.WorkspaceMode:
-                context.Push(new SimpleFieldScreen(new SingleSelectEditorScreen<WorkspaceModeOption>(
+                context.Push(new SimpleFieldScreen(Config, new SingleSelectEditorScreen<WorkspaceModeOption>(
                     "Select workspace mode",
                     SandboxConfig.WorkspaceModes,
                     m => $"{m.Name} [grey]- {MarkupText.Escape(m.Description)}[/]",
                     (ctx, mode) =>
                     {
-                        _config.WorkspaceMode = mode;
+                        Config.WorkspaceMode = mode;
                         ctx.Pop();
                     },
-                    SandboxConfig.WorkspaceModes.ToList().IndexOf(_config.WorkspaceMode))));
+                    SandboxConfig.WorkspaceModes.ToList().IndexOf(Config.WorkspaceMode))));
                 break;
 
             case FieldId.Template:
-                context.Push(new TemplateFieldScreen(_config, (ctx, template) =>
+                context.Push(new TemplateFieldScreen(Config, (ctx, template) =>
                 {
-                    _config.Template = template;
+                    Config.Template = template;
                     ctx.Pop();
                 }));
                 break;
 
             case FieldId.Kits:
-                context.Push(new KitsFieldScreen(_config));
+                context.Push(new KitsFieldScreen(Config));
                 break;
 
             case FieldId.Create:
@@ -234,7 +220,7 @@ internal sealed class MainScreen : Screen
             return;
         }
 
-        var template = _config.Template;
+        var template = Config.Template;
 
         _createJob = context.StartJob(async job =>
         {
@@ -248,8 +234,8 @@ internal sealed class MainScreen : Screen
                         template, line => job.Broadcast(new LogMessage(line)));
                 }
 
-                var args = SbxCommandBuilder.BuildArgs(_config, effectiveTemplateName);
-                job.Broadcast(new LogMessage($"Creating sandbox {_config.Name}..."));
+                var args = SbxCommandBuilder.BuildArgs(Config, effectiveTemplateName);
+                job.Broadcast(new LogMessage($"Creating sandbox {Config.Name}..."));
                 job.Broadcast(new LogMessage("sbx " + string.Join(' ', args)));
 
                 var exitCode = await ProcessRunner.RunStreamingAsync(
@@ -267,60 +253,16 @@ internal sealed class MainScreen : Screen
 
     private void AppendLog(string text)
     {
-        _log.Add(text);
-        while (_log.Count > MaxLogLines)
+        Config.Log.Add(text);
+        while (Config.Log.Count > MaxLogLines)
         {
-            _log.RemoveAt(0);
-        }
-
-        _previewContent.RefreshLog(_log);
-    }
-
-    public override void Render(RenderContext context)
-    {
-        var visibleLogLines = Math.Clamp(_log.Count, 0, MaxVisibleLogLines);
-        _layout.GetLayout("Preview").Size(2 + 1 + visibleLogLines);
-
-        context.Render(
-            Paragraph.FromMarkup("[bold cyan]create-sbx[/] [grey]— create a Docker sandbox[/]"),
-            _layout.GetArea(context, "Title"));
-
-        context.Render(
-            new BoxWidget()
-                .Border(Border.Rounded)
-                .Style(Color.Grey)
-                .TitlePadding(1)
-                .MarkupTitle("[bold]Preview[/]")
-                .Inner(new PaddingWidget(new Padding(1, 0), _previewContent)),
-            _layout.GetArea(context, "Preview"));
-
-        context.Render(_fields, _layout.GetArea(context, "Fields"));
-
-        context.Render(new HelpWidget(_keyMap, _fields.KeyMap).LeftAligned(), _layout.GetArea(context, "Help"));
-    }
-
-    private sealed class PreviewContent(Func<string> getCommand, ScrollViewWidget logScroller) : IWidget
-    {
-        private IWidget _logContent = Paragraph.FromMarkup("");
-
-        public void RefreshLog(IReadOnlyList<string> lines)
-        {
-            _logContent = Paragraph.FromMarkup(string.Join("\n", lines.Select(MarkupText.Escape)));
-            logScroller.Inner(_logContent);
-            logScroller.ScrollToBottom();
-        }
-
-        public void Render(RenderContext context)
-        {
-            var layout = new Layout("Preview")
-                .SplitRows(new Layout("Command").Size(1), new Layout("Log"));
-
-            context.Render(
-                Paragraph.FromMarkup($"[blue]{MarkupText.Escape(getCommand())}[/]").Ellipsis(),
-                layout.GetArea(context, "Command"));
-
-            logScroller.Inner(_logContent);
-            context.Render(logScroller, layout.GetArea(context, "Log"));
+            Config.Log.RemoveAt(0);
         }
     }
+
+    protected override int MiddleHeight => _fields.Items.Sum(item => item.CreateText(false).GetHeight());
+
+    protected override IEnumerable<IKeyMap> HelpKeyMaps => [_keyMap, _fields.KeyMap];
+
+    protected override void RenderMiddle(RenderContext context, Rectangle area) => context.Render(_fields, area);
 }

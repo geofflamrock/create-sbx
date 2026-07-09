@@ -1,13 +1,13 @@
-using CreateSbx.Widgets;
+using CreateSbx.Models;
 
 namespace CreateSbx.Screens;
 
-/// <summary>Shared shape for every field screen: an optional trail of answered breadcrumbs, the
-/// current step's content, and a left-aligned help bar describing the current step's keys —
-/// stacked top to bottom, all left-aligned. <see cref="SimpleFieldScreen"/> uses this directly
-/// for single-step fields; composite fields (Template, Kits, Agent) subclass it to swap
-/// <see cref="Current"/> between steps and grow <see cref="Breadcrumbs"/> as the user answers.</summary>
-internal abstract class MultiStepScreen : Screen
+/// <summary>Shared shape for every field editor: an optional trail of answered breadcrumbs above
+/// the current step's content, both sized into <see cref="ShellScreen"/>'s "middle" area.
+/// <see cref="SimpleFieldScreen"/> uses this directly for single-step fields; composite fields
+/// (Template, Kits, Agent) subclass it to swap <see cref="Current"/> between steps and grow
+/// <see cref="Breadcrumbs"/> as the user answers.</summary>
+internal abstract class MultiStepScreen : ShellScreen
 {
     protected List<string> Breadcrumbs { get; } = [];
 
@@ -17,6 +17,11 @@ internal abstract class MultiStepScreen : Screen
     protected IStep Current { get; set; } = null!;
 
     protected IJobHandle? ActiveJob { get; set; }
+
+    protected MultiStepScreen(SandboxConfig config)
+        : base(config)
+    {
+    }
 
     public override void OnLeave(ApplicationContext context)
     {
@@ -49,30 +54,26 @@ internal abstract class MultiStepScreen : Screen
         }
     }
 
-    public override void Render(RenderContext context)
+    protected override int MiddleHeight => Breadcrumbs.Count + Current.PreferredHeight;
+
+    protected override IEnumerable<IKeyMap> HelpKeyMaps => [Current];
+
+    protected override void RenderMiddle(RenderContext context, Rectangle area)
     {
-        Layout layout;
-        if (Breadcrumbs.Count > 0)
+        if (Breadcrumbs.Count == 0)
         {
-            layout = new Layout("Root")
-                .SplitRows(
-                    new Layout("Breadcrumbs").Size(Breadcrumbs.Count),
-                    new Layout("Content"),
-                    new Layout("Help").Size(1));
-
-            // Breadcrumbs are pre-composed markup (dynamic parts already escaped by whoever
-            // added them) rather than raw text, since some intentionally embed markup like
-            // [grey](default)[/] — escaping the whole line here would double-escape those tags.
-            var text = string.Join("\n", Breadcrumbs.Select(b => $"[grey]{b}[/]"));
-            context.Render(Paragraph.FromMarkup(text), layout.GetArea(context, "Breadcrumbs"));
-        }
-        else
-        {
-            layout = new Layout("Root")
-                .SplitRows(new Layout("Content"), new Layout("Help").Size(1));
+            context.Render(Current, area);
+            return;
         }
 
-        context.Render(Current, layout.GetArea(context, "Content"));
-        context.Render(new HelpWidget(Current).LeftAligned(), layout.GetArea(context, "Help"));
+        var layout = new Layout("Middle")
+            .SplitRows(new Layout("Breadcrumbs").Size(Breadcrumbs.Count), new Layout("Content"));
+
+        // Breadcrumbs are pre-composed markup (dynamic parts already escaped by whoever added
+        // them) rather than raw text, since some intentionally embed markup like
+        // [grey](default)[/] — escaping the whole line here would double-escape those tags.
+        var text = string.Join("\n", Breadcrumbs.Select(b => $"[grey]{b}[/]"));
+        context.Render(Paragraph.FromMarkup(text), layout.GetArea(area, "Breadcrumbs"));
+        context.Render(Current, layout.GetArea(area, "Content"));
     }
 }

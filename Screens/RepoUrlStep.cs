@@ -97,4 +97,6 @@ internal sealed class RepoUrlStep : IStep
     public void Render(RenderContext context) => _current.Render(context);
 
     public IEnumerable<KeyBinding> Help() => _current.Help();
+
+    public int PreferredHeight => _current.PreferredHeight;
 }

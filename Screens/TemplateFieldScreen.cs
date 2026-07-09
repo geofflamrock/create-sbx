@@ -10,13 +10,14 @@ namespace CreateSbx.Screens;
 /// the user pick one of the discovered Dockerfiles.</summary>
 internal sealed class TemplateFieldScreen : MultiStepScreen
 {
-    private readonly SandboxConfig _config;
     private readonly Action<ApplicationContext, TemplateConfig?> _onConfirm;
+    private string? _pendingOwner;
+    private string? _pendingRepo;
     private string? _pendingBranch;
 
     public TemplateFieldScreen(SandboxConfig config, Action<ApplicationContext, TemplateConfig?> onConfirm)
+        : base(config)
     {
-        _config = config;
         _onConfirm = onConfirm;
         Current = BuildSourceSelectStep();
     }
@@ -41,7 +42,7 @@ internal sealed class TemplateFieldScreen : MultiStepScreen
                         break;
                     case TemplateSource.GitRepo:
                         Breadcrumbs.Add($"Template source: {FormatSource(source)}");
-                        Current = new RepoUrlStep(_config, "template", OnGitRepoResolved, AddBreadcrumb);
+                        Current = new RepoUrlStep(Config, "template", OnGitRepoResolved, AddBreadcrumb);
                         break;
                     case TemplateSource.Local:
                         Breadcrumbs.Add($"Template source: {FormatSource(source)}");
@@ -88,14 +89,18 @@ internal sealed class TemplateFieldScreen : MultiStepScreen
 
     private void OnGitRepoResolved(ApplicationContext context, string owner, string repo, string branch)
     {
+        _pendingOwner = owner;
+        _pendingRepo = repo;
         _pendingBranch = branch;
         Current = new BusyStep($"Fetching {owner}/{repo}...");
         ActiveJob = context.StartJob(async job =>
         {
             try
             {
-                var cloneDir = await RepoService.EnsureRepoAsync(
-                    owner, repo, branch, _config.FetchedRepos, status => job.Broadcast(new LogMessage(status)));
+                // The BusyStep already shows "Fetching {owner}/{repo}..." locally — this status
+                // text is about browsing the repo for Dockerfiles, not the eventual `sbx create`,
+                // so it shouldn't also show up in the persistent preview log.
+                var cloneDir = await RepoService.EnsureRepoAsync(owner, repo, branch, Config.FetchedRepos, _ => { });
                 job.Broadcast(new RepoFetchSucceededMessage(cloneDir));
             }
             catch (Exception ex)
@@ -121,7 +126,13 @@ internal sealed class TemplateFieldScreen : MultiStepScreen
             (context, dockerfile) =>
             {
                 var absolutePath = Path.Combine(cloneDir, dockerfile);
-                var config = new TemplateConfig(TemplateSource.GitRepo, GenerateImageName(), absolutePath, cloneDir, _pendingBranch);
+                var config = new TemplateConfig(
+                    TemplateSource.GitRepo,
+                    GenerateImageName(),
+                    absolutePath,
+                    cloneDir,
+                    _pendingBranch,
+                    $"{_pendingOwner}/{_pendingRepo}");
                 _onConfirm(context, config);
             });
     }

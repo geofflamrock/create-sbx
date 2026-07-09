@@ -9,24 +9,23 @@ namespace CreateSbx.Screens;
 /// shared repo-url + fetch + multi-select flow.</summary>
 internal sealed class KitsFieldScreen : MultiStepScreen
 {
-    private readonly SandboxConfig _config;
     private KitGroup? _editingGroup;
     private string? _pendingOwner;
     private string? _pendingRepo;
     private string? _pendingBranch;
 
     public KitsFieldScreen(SandboxConfig config)
+        : base(config)
     {
-        _config = config;
         Current = BuildGroupListStep();
     }
 
-    private IStep BuildGroupListStep() => new KitGroupListStep(_config, OnAdd, OnEdit);
+    private IStep BuildGroupListStep() => new KitGroupListStep(Config, OnAdd, OnEdit);
 
     private void OnAdd(ApplicationContext context)
     {
         _editingGroup = null;
-        Current = new RepoUrlStep(_config, "kit", OnRepoResolved);
+        Current = new RepoUrlStep(Config, "kit", OnRepoResolved);
     }
 
     private void OnEdit(ApplicationContext context, KitGroup group)
@@ -49,8 +48,10 @@ internal sealed class KitsFieldScreen : MultiStepScreen
         {
             try
             {
-                var cloneDir = await RepoService.EnsureRepoAsync(
-                    owner, repo, branch, _config.FetchedRepos, status => job.Broadcast(new LogMessage(status)));
+                // The BusyStep already shows "Fetching {owner}/{repo}..." locally — this status
+                // text is about browsing the repo for kits, not the eventual `sbx create`, so it
+                // shouldn't also show up in the persistent preview log.
+                var cloneDir = await RepoService.EnsureRepoAsync(owner, repo, branch, Config.FetchedRepos, _ => { });
                 job.Broadcast(new RepoFetchSucceededMessage(cloneDir));
             }
             catch (Exception ex)
@@ -80,7 +81,7 @@ internal sealed class KitsFieldScreen : MultiStepScreen
                 {
                     if (selected.Count == 0)
                     {
-                        _config.KitGroups.Remove(editing);
+                        Config.KitGroups.Remove(editing);
                     }
                     else
                     {
@@ -89,7 +90,7 @@ internal sealed class KitsFieldScreen : MultiStepScreen
                 }
                 else if (selected.Count > 0)
                 {
-                    _config.KitGroups.Add(new KitGroup
+                    Config.KitGroups.Add(new KitGroup
                     {
                         Owner = _pendingOwner!,
                         Repo = _pendingRepo!,

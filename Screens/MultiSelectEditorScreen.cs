@@ -80,4 +80,6 @@ internal sealed class MultiSelectEditorScreen<T> : IStep
             yield return binding;
         }
     }
+
+    public int PreferredHeight => 1 + Math.Min(_list.Items.Count, StepLayout.MaxPreferredListRows);
 }

@@ -34,6 +34,10 @@ public sealed class SandboxConfig
     public List<string> RecentUrls { get; }
     public HashSet<string> FetchedRepos { get; } = [];
 
+    /// <summary>The preview panel's log — shared so every screen (not just the one that started
+    /// a build/create job) can render it via <see cref="Widgets.PreviewBox"/>.</summary>
+    public List<string> Log { get; } = [];
+
     public SandboxConfig(List<string> recentUrls)
     {
         RecentUrls = recentUrls;

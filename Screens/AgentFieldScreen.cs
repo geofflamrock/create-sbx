@@ -8,8 +8,10 @@ internal sealed class AgentFieldScreen : MultiStepScreen
 {
     private const string CustomSentinel = "__custom__";
 
-    public AgentFieldScreen(string currentAgentId, Action<ApplicationContext, string> onConfirm)
+    public AgentFieldScreen(SandboxConfig config, Action<ApplicationContext, string> onConfirm)
+        : base(config)
     {
+        var currentAgentId = config.AgentId;
         var options = SandboxConfig.BuiltInAgents.Select(a => a.Id).Append(CustomSentinel).ToList();
         var selectedIndex = Math.Max(0, options.IndexOf(currentAgentId));
 

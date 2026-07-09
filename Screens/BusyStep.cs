@@ -35,4 +35,6 @@ internal sealed class BusyStep : IStep
     {
         yield return KeyBinding.For(Key.Escape).WithHelp("Back");
     }
+
+    public int PreferredHeight => 1;
 }

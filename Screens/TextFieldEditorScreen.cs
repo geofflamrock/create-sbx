@@ -93,4 +93,6 @@ internal sealed class TextFieldEditorScreen : IStep
         yield return KeyBinding.For(Key.Escape).WithHelp("Back");
         yield return KeyBinding.For(Key.Enter).WithHelp("Confirm");
     }
+
+    public int PreferredHeight => 2;
 }

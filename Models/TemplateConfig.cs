@@ -5,4 +5,5 @@ public sealed record TemplateConfig(
     string ImageName,
     string? DockerfilePath,
     string? DockerContext,
-    string? Branch = null);
+    string? Branch = null,
+    string? RepoSlug = null);
