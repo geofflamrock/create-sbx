@@ -38,6 +38,11 @@ public static class SbxCommandBuilder
         args.Add(config.AgentId);
         args.Add(config.WorkDir);
 
+        foreach (var directory in config.AdditionalWorkspaceDirectories)
+        {
+            args.Add(directory.ToArgument());
+        }
+
         return args;
     }
 
@@ -63,6 +68,11 @@ public static class SbxCommandBuilder
 
         parts.Add(config.AgentId);
         parts.Add($"\"{config.WorkDir}\"");
+
+        if (config.AdditionalWorkspaceDirectories.Count > 0)
+        {
+            parts.Add(string.Join(" ", config.AdditionalWorkspaceDirectories.Select(d => $"\"{d.ToArgument()}\"")));
+        }
 
         return string.Join(" ", parts);
     }

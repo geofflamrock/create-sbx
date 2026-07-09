@@ -79,7 +79,7 @@ internal sealed class RepoUrlStep : IStep
             return;
         }
 
-        RecentUrlsStore.Add(_config.RecentUrls, url);
+        RecentEntriesStore.Add(_config.RecentUrls, url, RecentEntriesStore.UrlsFile);
         _onAnswered("Repository", $"{owner}/{repo}");
 
         _current = new TextFieldEditorScreen(

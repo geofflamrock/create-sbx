@@ -2,14 +2,20 @@ using CreateSbx.Models;
 
 namespace CreateSbx.Widgets;
 
-internal enum FieldId { Name, Agent, WorkDir, WorkspaceMode, Template, KitGroup, AddKit, Spacer, Create, Exit }
+internal enum FieldId
+{
+    Name, Agent, WorkDir, WorkspaceMode, Template,
+    KitGroup, AddKit,
+    WorkspaceDirEntry, AddWorkspaceDir,
+    Spacer, Create, Exit,
+}
 
 /// <summary>A row in the main field list: a data field (label/value in two aligned columns), a
-/// kit source row or the trailing "+ Add kit source" row (both part of the Kits "section", so
-/// only the first row in that section shows the "Kits" label — the rest indent to line up under
-/// the value column), a blank spacer row (skipped during navigation), or an action row ("Create
-/// sandbox" / "Exit", rendered without a value). White when idle, green — label and value alike —
-/// when selected.</summary>
+/// kit source / additional workspace directory row or their trailing "+ Add ..." row (each pair
+/// forms a "section", so only the first row in that section shows its label — the rest indent to
+/// line up under the value column), a blank spacer row (skipped during navigation), or an action
+/// row ("Create sandbox" / "Exit", rendered without a value). White when idle, green — label and
+/// value alike — when selected.</summary>
 internal sealed class FieldListItem : IListWidgetItem
 {
     private readonly string? _label;
@@ -20,27 +26,43 @@ internal sealed class FieldListItem : IListWidgetItem
 
     public KitGroup? Group { get; }
 
-    private FieldListItem(FieldId id, string? label, Func<string>? getValue, int labelColumnWidth, KitGroup? group)
+    public WorkspaceDirectory? Directory { get; }
+
+    private FieldListItem(
+        FieldId id, string? label, Func<string>? getValue, int labelColumnWidth, KitGroup? group, WorkspaceDirectory? directory)
     {
         Id = id;
         _label = label;
         _getValue = getValue;
         _labelColumnWidth = labelColumnWidth;
         Group = group;
+        Directory = directory;
     }
 
     public static FieldListItem Field(FieldId id, string label, Func<string> getValue, int labelColumnWidth) =>
-        new(id, label, getValue, labelColumnWidth, null);
+        new(id, label, getValue, labelColumnWidth, null, null);
 
-    public static FieldListItem Action(FieldId id, string label) => new(id, label, null, 0, null);
+    public static FieldListItem Action(FieldId id, string label) => new(id, label, null, 0, null, null);
 
-    public static FieldListItem Spacer() => new(FieldId.Spacer, null, null, 0, null);
+    public static FieldListItem Spacer() => new(FieldId.Spacer, null, null, 0, null, null);
 
     public static FieldListItem ForKitGroup(KitGroup group, bool showLabel, int labelColumnWidth) =>
-        new(FieldId.KitGroup, showLabel ? "Kits" : null, () => FormatKitGroup(group), labelColumnWidth, group);
+        new(FieldId.KitGroup, showLabel ? "Kits" : null, () => FormatKitGroup(group), labelColumnWidth, group, null);
 
     public static FieldListItem AddKitRow(bool showLabel, int labelColumnWidth) =>
-        new(FieldId.AddKit, showLabel ? "Kits" : null, () => "+ Add kit source", labelColumnWidth, null);
+        new(FieldId.AddKit, showLabel ? "Kits" : null, () => "+ Add kit source", labelColumnWidth, null, null);
+
+    public static FieldListItem ForWorkspaceDirectory(WorkspaceDirectory directory, bool showLabel, int labelColumnWidth) =>
+        new(
+            FieldId.WorkspaceDirEntry,
+            showLabel ? "Additional dirs" : null,
+            () => FormatWorkspaceDirectory(directory),
+            labelColumnWidth,
+            null,
+            directory);
+
+    public static FieldListItem AddWorkspaceDirectoryRow(bool showLabel, int labelColumnWidth) =>
+        new(FieldId.AddWorkspaceDir, showLabel ? "Additional dirs" : null, () => "+ Add workspace directory", labelColumnWidth, null, null);
 
     private static string FormatKitGroup(KitGroup group)
     {
@@ -48,6 +70,9 @@ internal sealed class FieldListItem : IListWidgetItem
         var kitNames = string.Join(", ", group.SelectedKits.Select(k => k.DisplayName));
         return $"{group.Owner}/{group.Repo}{branchSuffix} — {kitNames}";
     }
+
+    private static string FormatWorkspaceDirectory(WorkspaceDirectory directory) =>
+        $"{directory.Path} ({(directory.ReadOnly ? "read-only" : "read/write")})";
 
     public Text CreateText(bool isSelected)
     {

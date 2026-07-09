@@ -30,16 +30,19 @@ public sealed class SandboxConfig
     public WorkspaceModeOption WorkspaceMode { get; set; } = WorkspaceModes[0];
     public TemplateConfig? Template { get; set; }
     public List<KitGroup> KitGroups { get; } = [];
+    public List<WorkspaceDirectory> AdditionalWorkspaceDirectories { get; } = [];
 
     public List<string> RecentUrls { get; }
+    public List<string> RecentWorkspaceDirectories { get; }
     public HashSet<string> FetchedRepos { get; } = [];
 
     /// <summary>The preview panel's log — shared so every screen (not just the one that started
     /// a build/create job) can render it via <see cref="Widgets.PreviewBox"/>.</summary>
     public List<string> Log { get; } = [];
 
-    public SandboxConfig(List<string> recentUrls)
+    public SandboxConfig(List<string> recentUrls, List<string> recentWorkspaceDirectories)
     {
         RecentUrls = recentUrls;
+        RecentWorkspaceDirectories = recentWorkspaceDirectories;
     }
 }

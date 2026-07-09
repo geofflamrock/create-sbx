@@ -16,7 +16,9 @@ internal sealed class MainScreen : ShellScreen
     public int? ExitCode { get; private set; }
 
     public MainScreen()
-        : base(new SandboxConfig(RecentUrlsStore.Load()))
+        : base(new SandboxConfig(
+            RecentEntriesStore.Load(RecentEntriesStore.UrlsFile),
+            RecentEntriesStore.Load(RecentEntriesStore.WorkspaceDirectoriesFile)))
     {
     }
 
@@ -26,12 +28,12 @@ internal sealed class MainScreen : ShellScreen
         [
             (FieldId.Name, "Name", () => Config.Name),
             (FieldId.Agent, "Agent", () => Config.AgentId),
-            (FieldId.WorkDir, "Working directory", () => Config.WorkDir),
+            (FieldId.WorkDir, "Workspace directory", () => Config.WorkDir),
             (FieldId.WorkspaceMode, "Workspace mode", () => Config.WorkspaceMode.Name),
             (FieldId.Template, "Template", DescribeTemplate),
         ];
 
-        var labelColumnWidth = Math.Max(fields.Max(f => f.Label.Length), "Kits".Length);
+        var labelColumnWidth = fields.Max(f => f.Label.Length);
 
         var rows = fields.Select(f => FieldListItem.Field(f.Id, f.Label, f.GetValue, labelColumnWidth)).ToList();
 
@@ -41,6 +43,13 @@ internal sealed class MainScreen : ShellScreen
         }
 
         rows.Add(FieldListItem.AddKitRow(showLabel: Config.KitGroups.Count == 0, labelColumnWidth));
+
+        for (var i = 0; i < Config.AdditionalWorkspaceDirectories.Count; i++)
+        {
+            rows.Add(FieldListItem.ForWorkspaceDirectory(Config.AdditionalWorkspaceDirectories[i], showLabel: i == 0, labelColumnWidth));
+        }
+
+        rows.Add(FieldListItem.AddWorkspaceDirectoryRow(showLabel: Config.AdditionalWorkspaceDirectories.Count == 0, labelColumnWidth));
 
         rows.Add(FieldListItem.Spacer());
         rows.Add(FieldListItem.Action(FieldId.Create, "Create sandbox"));
@@ -103,13 +112,9 @@ internal sealed class MainScreen : ShellScreen
             return;
         }
 
-        if (_keyMap.RemoveKit.Matches(key))
+        if (_keyMap.Remove.Matches(key))
         {
-            if (rows[_selectedIndex] is { Id: FieldId.KitGroup, Group: { } group })
-            {
-                Config.KitGroups.Remove(group);
-            }
-
+            RemoveSelected(rows[_selectedIndex]);
             return;
         }
 
@@ -122,6 +127,19 @@ internal sealed class MainScreen : ShellScreen
         if (_keyMap.MoveUp.Matches(key))
         {
             MoveSelection(rows, forward: false);
+        }
+    }
+
+    private void RemoveSelected(FieldListItem selected)
+    {
+        switch (selected)
+        {
+            case { Id: FieldId.KitGroup, Group: { } group }:
+                Config.KitGroups.Remove(group);
+                break;
+            case { Id: FieldId.WorkspaceDirEntry, Directory: { } directory }:
+                Config.AdditionalWorkspaceDirectories.Remove(directory);
+                break;
         }
     }
 
@@ -161,7 +179,7 @@ internal sealed class MainScreen : ShellScreen
                 break;
 
             case FieldId.WorkDir:
-                context.Push(new SimpleFieldScreen(Config, new TextFieldEditorScreen("Working directory", Config.WorkDir, (ctx, value) =>
+                context.Push(new SimpleFieldScreen(Config, new TextFieldEditorScreen("Workspace directory", Config.WorkDir, (ctx, value) =>
                 {
                     Config.WorkDir = value;
                     ctx.Pop();
@@ -195,6 +213,14 @@ internal sealed class MainScreen : ShellScreen
 
             case FieldId.AddKit:
                 context.Push(new KitEditScreen(Config, null));
+                break;
+
+            case FieldId.WorkspaceDirEntry:
+                context.Push(new WorkspaceDirectoryEditScreen(Config, selected.Directory));
+                break;
+
+            case FieldId.AddWorkspaceDir:
+                context.Push(new WorkspaceDirectoryEditScreen(Config, null));
                 break;
 
             case FieldId.Create:
@@ -263,9 +289,17 @@ internal sealed class MainScreen : ShellScreen
         var rows = BuildRows();
         _selectedIndex = Math.Clamp(_selectedIndex, 0, Math.Max(0, rows.Count - 1));
 
+        _keyMap.RemoveHelpText = rows.Count == 0
+            ? null
+            : rows[_selectedIndex].Id switch
+            {
+                FieldId.KitGroup => "Remove kit",
+                FieldId.WorkspaceDirEntry => "Remove directory",
+                _ => null,
+            };
+
         var list = new ListWidget<FieldListItem>(rows)
             .HighlightSymbol("→ ")
-            .HighlightStyle(new Style(decoration: Decoration.Bold))
             .SelectedIndex(rows.Count == 0 ? null : _selectedIndex);
 
         context.Render(list, area);

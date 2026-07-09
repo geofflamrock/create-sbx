@@ -4,7 +4,7 @@ namespace CreateSbx.Screens;
 
 /// <summary>A single-line text input step, rendered inline (label, then the input on the same
 /// row — no box). Used standalone (wrapped in <see cref="SimpleFieldScreen"/>) for simple fields
-/// like Name/Working directory, and embedded as one step of a composite field screen (e.g.
+/// like Name/Workspace directory, and embedded as one step of a composite field screen (e.g.
 /// entering a custom agent id, an image name, a branch). Escape always pops back to the previous
 /// screen; Enter validates (if a validator was supplied) and, once valid, hands control back to
 /// the caller via <paramref name="onConfirm"/> — which decides whether that means popping back or
