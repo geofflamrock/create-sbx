@@ -94,5 +94,7 @@ internal sealed class TextFieldEditorScreen : IStep
         yield return KeyBinding.For(Key.Enter).WithHelp("Confirm");
     }
 
-    public int PreferredHeight => 2;
+    // Only reserve a footer row when there's actually something to put in it — otherwise it's
+    // just a spare blank line sitting on top of the shell's own spacer before the help bar.
+    public int PreferredHeight => _error is not null || _hint is not null ? 2 : 1;
 }

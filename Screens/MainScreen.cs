@@ -9,8 +9,8 @@ internal sealed class MainScreen : ShellScreen
 {
     private const int MaxLogLines = 500;
 
-    private readonly ListWidget<FieldListItem> _fields;
     private readonly MainScreenKeyMap _keyMap = new();
+    private int _selectedIndex;
     private IJobHandle? _createJob;
 
     public int? ExitCode { get; private set; }
@@ -18,34 +18,35 @@ internal sealed class MainScreen : ShellScreen
     public MainScreen()
         : base(new SandboxConfig(RecentUrlsStore.Load()))
     {
-        _fields = new ListWidget<FieldListItem>(BuildRows())
-            .HighlightSymbol("→ ")
-            .HighlightStyle(new Style(decoration: Decoration.Bold))
-            .WrapAround()
-            .SelectedIndex(0);
     }
 
     private List<FieldListItem> BuildRows()
     {
-        (FieldId Id, string Label, Func<string>? GetValue)[] fields =
+        (FieldId Id, string Label, Func<string> GetValue)[] fields =
         [
             (FieldId.Name, "Name", () => Config.Name),
             (FieldId.Agent, "Agent", () => Config.AgentId),
             (FieldId.WorkDir, "Working directory", () => Config.WorkDir),
             (FieldId.WorkspaceMode, "Workspace mode", () => Config.WorkspaceMode.Name),
             (FieldId.Template, "Template", DescribeTemplate),
-            (FieldId.Kits, "Kits", DescribeKits),
         ];
 
-        var labelColumnWidth = fields.Max(f => f.Label.Length);
+        var labelColumnWidth = Math.Max(fields.Max(f => f.Label.Length), "Kits".Length);
 
-        return
-        [
-            .. fields.Select(f => new FieldListItem(f.Id, f.Label, f.GetValue, labelColumnWidth)),
-            new(FieldId.Spacer, "", null),
-            new(FieldId.Create, "Create sandbox", null),
-            new(FieldId.Exit, "Exit", null),
-        ];
+        var rows = fields.Select(f => FieldListItem.Field(f.Id, f.Label, f.GetValue, labelColumnWidth)).ToList();
+
+        for (var i = 0; i < Config.KitGroups.Count; i++)
+        {
+            rows.Add(FieldListItem.ForKitGroup(Config.KitGroups[i], showLabel: i == 0, labelColumnWidth));
+        }
+
+        rows.Add(FieldListItem.AddKitRow(showLabel: Config.KitGroups.Count == 0, labelColumnWidth));
+
+        rows.Add(FieldListItem.Spacer());
+        rows.Add(FieldListItem.Action(FieldId.Create, "Create sandbox"));
+        rows.Add(FieldListItem.Action(FieldId.Exit, "Exit"));
+
+        return rows;
     }
 
     private string DescribeTemplate()
@@ -66,21 +67,6 @@ internal sealed class MainScreen : ShellScreen
         };
     }
 
-    private string DescribeKits()
-    {
-        var lines = Config.KitGroups
-            .SelectMany(g => g.SelectedKits.Select(k => DescribeKit(g, k)))
-            .ToList();
-
-        return lines.Count == 0 ? "(none)" : string.Join("\n", lines);
-    }
-
-    private static string DescribeKit(KitGroup group, Kit kit)
-    {
-        var branchSuffix = string.IsNullOrEmpty(group.Branch) ? "" : $" ({group.Branch})";
-        return $"{group.Owner}/{group.Repo}{branchSuffix} — {kit.DisplayName}";
-    }
-
     public override void OnMessage(ApplicationContext context, ApplicationMessage message)
     {
         switch (message)
@@ -97,61 +83,65 @@ internal sealed class MainScreen : ShellScreen
                 return;
         }
 
-        if (message is KeyMessage key)
-        {
-            if (_keyMap.Quit.Matches(key))
-            {
-                context.Quit();
-                return;
-            }
-
-            if (_keyMap.Select.Matches(key))
-            {
-                Activate(context);
-                return;
-            }
-
-            if (_fields.KeyMap.MoveDown.Matches(key))
-            {
-                _fields.MoveDown();
-                SkipSpacer(forward: true);
-                return;
-            }
-
-            if (_fields.KeyMap.MoveUp.Matches(key))
-            {
-                _fields.MoveUp();
-                SkipSpacer(forward: false);
-                return;
-            }
-        }
-    }
-
-    private void SkipSpacer(bool forward)
-    {
-        if (_fields.SelectedItem?.Id != FieldId.Spacer)
+        if (message is not KeyMessage key)
         {
             return;
         }
 
-        if (forward)
+        if (_keyMap.Quit.Matches(key))
         {
-            _fields.MoveDown();
+            context.Quit();
+            return;
         }
-        else
+
+        var rows = BuildRows();
+        _selectedIndex = Math.Clamp(_selectedIndex, 0, Math.Max(0, rows.Count - 1));
+
+        if (_keyMap.Select.Matches(key))
         {
-            _fields.MoveUp();
+            Activate(context, rows[_selectedIndex]);
+            return;
+        }
+
+        if (_keyMap.RemoveKit.Matches(key))
+        {
+            if (rows[_selectedIndex] is { Id: FieldId.KitGroup, Group: { } group })
+            {
+                Config.KitGroups.Remove(group);
+            }
+
+            return;
+        }
+
+        if (_keyMap.MoveDown.Matches(key))
+        {
+            MoveSelection(rows, forward: true);
+            return;
+        }
+
+        if (_keyMap.MoveUp.Matches(key))
+        {
+            MoveSelection(rows, forward: false);
         }
     }
 
-    private void Activate(ApplicationContext context)
+    private void MoveSelection(List<FieldListItem> rows, bool forward)
     {
-        var selected = _fields.SelectedItem;
-        if (selected is null)
+        if (rows.Count == 0)
         {
             return;
         }
 
+        var step = forward ? 1 : -1;
+        do
+        {
+            _selectedIndex = ((_selectedIndex + step) % rows.Count + rows.Count) % rows.Count;
+        }
+        while (rows[_selectedIndex].Id == FieldId.Spacer);
+    }
+
+    private void Activate(ApplicationContext context, FieldListItem selected)
+    {
         switch (selected.Id)
         {
             case FieldId.Name:
@@ -199,8 +189,12 @@ internal sealed class MainScreen : ShellScreen
                 }));
                 break;
 
-            case FieldId.Kits:
-                context.Push(new KitsFieldScreen(Config));
+            case FieldId.KitGroup:
+                context.Push(new KitEditScreen(Config, selected.Group));
+                break;
+
+            case FieldId.AddKit:
+                context.Push(new KitEditScreen(Config, null));
                 break;
 
             case FieldId.Create:
@@ -260,9 +254,20 @@ internal sealed class MainScreen : ShellScreen
         }
     }
 
-    protected override int MiddleHeight => _fields.Items.Sum(item => item.CreateText(false).GetHeight());
+    protected override int MiddleHeight => BuildRows().Sum(r => r.CreateText(false).GetHeight());
 
-    protected override IEnumerable<IKeyMap> HelpKeyMaps => [_keyMap, _fields.KeyMap];
+    protected override IEnumerable<IKeyMap> HelpKeyMaps => [_keyMap];
 
-    protected override void RenderMiddle(RenderContext context, Rectangle area) => context.Render(_fields, area);
+    protected override void RenderMiddle(RenderContext context, Rectangle area)
+    {
+        var rows = BuildRows();
+        _selectedIndex = Math.Clamp(_selectedIndex, 0, Math.Max(0, rows.Count - 1));
+
+        var list = new ListWidget<FieldListItem>(rows)
+            .HighlightSymbol("→ ")
+            .HighlightStyle(new Style(decoration: Decoration.Bold))
+            .SelectedIndex(rows.Count == 0 ? null : _selectedIndex);
+
+        context.Render(list, area);
+    }
 }

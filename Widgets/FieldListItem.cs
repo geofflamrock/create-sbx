@@ -1,14 +1,53 @@
+using CreateSbx.Models;
+
 namespace CreateSbx.Widgets;
 
-internal enum FieldId { Name, Agent, WorkDir, WorkspaceMode, Template, Kits, Spacer, Create, Exit }
+internal enum FieldId { Name, Agent, WorkDir, WorkspaceMode, Template, KitGroup, AddKit, Spacer, Create, Exit }
 
 /// <summary>A row in the main field list: a data field (label/value in two aligned columns), a
-/// blank spacer row (skipped during navigation), or an action row ("Create sandbox" / "Exit",
-/// rendered without a value). A value may itself span multiple lines (e.g. one line per kit) —
-/// continuation lines are indented to line up under the value column.</summary>
-internal sealed class FieldListItem(FieldId id, string label, Func<string>? getValue, int labelColumnWidth = 0) : IListWidgetItem
+/// kit source row or the trailing "+ Add kit source" row (both part of the Kits "section", so
+/// only the first row in that section shows the "Kits" label — the rest indent to line up under
+/// the value column), a blank spacer row (skipped during navigation), or an action row ("Create
+/// sandbox" / "Exit", rendered without a value). White when idle, green — label and value alike —
+/// when selected.</summary>
+internal sealed class FieldListItem : IListWidgetItem
 {
-    public FieldId Id { get; } = id;
+    private readonly string? _label;
+    private readonly Func<string>? _getValue;
+    private readonly int _labelColumnWidth;
+
+    public FieldId Id { get; }
+
+    public KitGroup? Group { get; }
+
+    private FieldListItem(FieldId id, string? label, Func<string>? getValue, int labelColumnWidth, KitGroup? group)
+    {
+        Id = id;
+        _label = label;
+        _getValue = getValue;
+        _labelColumnWidth = labelColumnWidth;
+        Group = group;
+    }
+
+    public static FieldListItem Field(FieldId id, string label, Func<string> getValue, int labelColumnWidth) =>
+        new(id, label, getValue, labelColumnWidth, null);
+
+    public static FieldListItem Action(FieldId id, string label) => new(id, label, null, 0, null);
+
+    public static FieldListItem Spacer() => new(FieldId.Spacer, null, null, 0, null);
+
+    public static FieldListItem ForKitGroup(KitGroup group, bool showLabel, int labelColumnWidth) =>
+        new(FieldId.KitGroup, showLabel ? "Kits" : null, () => FormatKitGroup(group), labelColumnWidth, group);
+
+    public static FieldListItem AddKitRow(bool showLabel, int labelColumnWidth) =>
+        new(FieldId.AddKit, showLabel ? "Kits" : null, () => "+ Add kit source", labelColumnWidth, null);
+
+    private static string FormatKitGroup(KitGroup group)
+    {
+        var branchSuffix = string.IsNullOrEmpty(group.Branch) ? "" : $" ({group.Branch})";
+        var kitNames = string.Join(", ", group.SelectedKits.Select(k => k.DisplayName));
+        return $"{group.Owner}/{group.Repo}{branchSuffix} — {kitNames}";
+    }
 
     public Text CreateText(bool isSelected)
     {
@@ -17,22 +56,22 @@ internal sealed class FieldListItem(FieldId id, string label, Func<string>? getV
             return Text.FromString("");
         }
 
-        if (getValue is null)
+        var color = isSelected ? "green" : "white";
+
+        if (_getValue is null)
         {
-            var style = Id == FieldId.Exit ? "red" : "green";
-            return Text.FromMarkup($"[{style} bold]{MarkupText.Escape(label)}[/]");
+            return Text.FromMarkup($"[{color} bold]{MarkupText.Escape(_label!)}[/]");
         }
 
-        var paddedLabel = MarkupText.Escape(label).PadRight(labelColumnWidth);
-        var indent = new string(' ', labelColumnWidth + 2);
-        var valueLines = MarkupText.Escape(getValue()).Split('\n');
+        var escapedValue = MarkupText.Escape(_getValue());
 
-        var markup = string.Join(
-            "\n",
-            valueLines.Select((line, index) => index == 0
-                ? $"[green]{paddedLabel}[/]  {line}"
-                : $"{indent}{line}"));
+        if (_label is null)
+        {
+            var indent = new string(' ', _labelColumnWidth + 2);
+            return Text.FromMarkup($"{indent}[{color}]{escapedValue}[/]");
+        }
 
-        return Text.FromMarkup(markup);
+        var paddedLabel = MarkupText.Escape(_label).PadRight(_labelColumnWidth);
+        return Text.FromMarkup($"[{color}]{paddedLabel}[/]  [{color}]{escapedValue}[/]");
     }
 }

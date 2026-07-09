@@ -5,43 +5,49 @@ using CreateSbx.Widgets;
 
 namespace CreateSbx.Screens;
 
-/// <summary>Kits field editor: a list of added kit sources, each addable/editable through the
-/// shared repo-url + fetch + multi-select flow.</summary>
-internal sealed class KitsFieldScreen : MultiStepScreen
+/// <summary>Adds a new kit source, or re-opens an existing one to change which of its kits are
+/// included. The main screen's field list owns the list of sources itself (add/edit/delete each
+/// show up as their own row there) — this screen only handles the repo-url/fetch/multi-select
+/// sub-flow for a single source.</summary>
+internal sealed class KitEditScreen : MultiStepScreen
 {
-    private KitGroup? _editingGroup;
+    private readonly KitGroup? _editingGroup;
     private string? _pendingOwner;
     private string? _pendingRepo;
     private string? _pendingBranch;
 
-    public KitsFieldScreen(SandboxConfig config)
+    public KitEditScreen(SandboxConfig config, KitGroup? editingGroup)
         : base(config)
     {
-        Current = BuildGroupListStep();
+        _editingGroup = editingGroup;
+
+        if (editingGroup is null)
+        {
+            Current = new RepoUrlStep(Config, "kit", OnRepoResolved, AddBreadcrumb);
+        }
+        else
+        {
+            AddBreadcrumb("Repository", $"{editingGroup.Owner}/{editingGroup.Repo}");
+            AddBreadcrumb("Branch", string.IsNullOrEmpty(editingGroup.Branch) ? "(default)" : editingGroup.Branch);
+            Current = new BusyStep($"Fetching {editingGroup.Owner}/{editingGroup.Repo}...");
+        }
     }
 
-    private IStep BuildGroupListStep() => new KitGroupListStep(Config, OnAdd, OnEdit);
-
-    private void OnAdd(ApplicationContext context)
+    public override void OnEnter(ApplicationContext context)
     {
-        _editingGroup = null;
-        Current = new RepoUrlStep(Config, "kit", OnRepoResolved);
+        if (_editingGroup is { } group)
+        {
+            OnRepoResolved(context, group.Owner, group.Repo, group.Branch);
+        }
     }
 
-    private void OnEdit(ApplicationContext context, KitGroup group)
-    {
-        _editingGroup = group;
-        OnRepoResolved(context, group.Owner, group.Repo, group.Branch);
-    }
+    private void AddBreadcrumb(string label, string value) => Breadcrumbs.Add($"{label}: {MarkupText.Escape(value)}");
 
     private void OnRepoResolved(ApplicationContext context, string owner, string repo, string branch)
     {
         _pendingOwner = owner;
         _pendingRepo = repo;
         _pendingBranch = branch;
-
-        Breadcrumbs.Add($"Repository: {MarkupText.Escape(owner)}/{MarkupText.Escape(repo)}");
-        Breadcrumbs.Add($"Branch: {MarkupText.Escape(string.IsNullOrEmpty(branch) ? "(default)" : branch)}");
 
         Current = new BusyStep($"Fetching {owner}/{repo}...");
         ActiveJob = context.StartJob(async job =>
@@ -66,7 +72,7 @@ internal sealed class KitsFieldScreen : MultiStepScreen
         var kits = RepoService.FindKits(cloneDir);
         if (kits.Count == 0)
         {
-            Current = new MessageStep("No kits found in the repository.", _ => Reset());
+            Current = new MessageStep("No kits found in the repository.", ctx => ctx.Pop());
             return;
         }
 
@@ -99,15 +105,9 @@ internal sealed class KitsFieldScreen : MultiStepScreen
                     });
                 }
 
-                Reset();
+                context.Pop();
             },
             isInitiallyChecked: kit => editing?.SelectedKits.Any(k => k.Directory == kit.Directory) ?? false);
-    }
-
-    private void Reset()
-    {
-        Breadcrumbs.Clear();
-        Current = BuildGroupListStep();
     }
 
     private static string FormatKit(Kit kit) => kit.Description is not null
@@ -127,7 +127,7 @@ internal sealed class KitsFieldScreen : MultiStepScreen
                 HandleRepoFetched(success.CloneDir);
                 return true;
             case RepoFetchFailedMessage failure:
-                Current = new MessageStep($"Failed to fetch repository: {failure.Error}", _ => Reset());
+                Current = new MessageStep($"Failed to fetch repository: {failure.Error}", ctx => ctx.Pop());
                 return true;
             default:
                 return false;
