@@ -7,14 +7,11 @@ namespace CreateSbx.Screens;
 
 /// <summary>Pushed the moment "Create sandbox" is activated, replacing the field list entirely:
 /// starts the build/create job and streams its output live, with no help bar since there's
-/// nothing to do but watch. Once the job finishes, shows a success/failure banner and stays up
-/// (dismissed only by the user) — an inline-mode app has no alt-screen to fall back to, so
-/// leaving right away would take the log with it.</summary>
+/// nothing to do but watch. Once the job finishes, shows a success/failure message in place of
+/// the help bar — on success, Enter exits; on failure, Enter goes back to the main screen (to fix
+/// something and retry) or Esc exits.</summary>
 internal sealed class CreateScreen : Screen
 {
-    private static readonly KeyBinding DismissBinding = KeyBinding.Combine(
-        KeyBinding.For(Key.Enter), KeyBinding.For(Key.Escape), KeyBinding.For('q')).WithHelp("Exit");
-
     private readonly SandboxConfig _config;
     private readonly List<string> _log = [];
     private readonly ScrollViewWidget _scroller = new ScrollViewWidget().HorizontalScroll(ScrollMode.Disabled);
@@ -80,10 +77,27 @@ internal sealed class CreateScreen : Screen
             return;
         }
 
-        if (_finished && DismissBinding.Matches(key))
+        if (_finished)
         {
-            context.Quit();
-            return;
+            if (key.Key == Key.Enter)
+            {
+                if (_exitCode == 0)
+                {
+                    context.Quit();
+                }
+                else
+                {
+                    context.Pop();
+                }
+
+                return;
+            }
+
+            if (_exitCode != 0 && key.Key == Key.Escape)
+            {
+                context.Quit();
+                return;
+            }
         }
 
         _scroller.KeyMap.HandleKey(key);
@@ -91,29 +105,24 @@ internal sealed class CreateScreen : Screen
 
     public override void Render(RenderContext context)
     {
-        var layout = new Layout("Root")
-            .SplitRows(
-                new Layout("Banner").Size(1),
-                new Layout("Log"),
-                new Layout("Footer").Size(1));
-
-        var banner = _finished
-            ? _exitCode == 0
-                ? "[green bold]Sandbox created successfully.[/]"
-                : $"[red bold]sbx exited with code {_exitCode}.[/]"
-            : $"[cyan]Creating sandbox {MarkupText.Escape(_config.Name)}...[/]";
-
-        context.Render(Paragraph.FromMarkup(banner), layout.GetArea(context, "Banner"));
-
         _scroller.Inner(Paragraph.FromMarkup(string.Join("\n", _log.Select(MarkupText.Escape))));
         _scroller.ScrollToBottom();
+
+        if (!_finished)
+        {
+            context.Render(_scroller, context.Viewport);
+            return;
+        }
+
+        var layout = new Layout("Root")
+            .SplitRows(new Layout("Log"), new Layout("Spacer").Size(1), new Layout("Message").Size(2));
+
         context.Render(_scroller, layout.GetArea(context, "Log"));
 
-        if (_finished)
-        {
-            context.Render(
-                Paragraph.FromMarkup("[grey]↑/↓ scroll  [[Enter/Esc/q]] exit[/]"),
-                layout.GetArea(context, "Footer"));
-        }
+        var message = _exitCode == 0
+            ? "[green]Sandbox created successfully. Press Enter to exit.[/]"
+            : "[red]There was an error creating the sandbox. Press Enter to go back to the main screen, or Esc to exit.[/]";
+
+        context.Render(Paragraph.FromMarkup(message), layout.GetArea(context, "Message"));
     }
 }
