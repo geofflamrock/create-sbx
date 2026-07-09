@@ -11,12 +11,7 @@ return await rootCommand.Parse(args).InvokeAsync();
 
 async Task<int> RunAsync()
 {
-    var settings = new ApplicationSettings
-    {
-        Terminal = Terminal.Create(new InlineMode(24)),
-    };
-
     var mainScreen = new MainScreen();
-    await Application.Create(settings).RunAsync(mainScreen);
+    await Application.Create().RunAsync(mainScreen);
     return mainScreen.ExitCode ?? 0;
 }

@@ -2,8 +2,8 @@ using CreateSbx.Widgets;
 
 namespace CreateSbx.Screens;
 
-/// <summary>A single-select list step. Escape pops the whole popup; Enter hands the highlighted
-/// item back via <paramref name="onSelect"/>, which decides whether that closes the popup or
+/// <summary>A single-select list step. Escape pops back to the previous screen; Enter hands the highlighted
+/// item back via <paramref name="onSelect"/>, which decides whether that pops back or
 /// advances to another step.</summary>
 internal sealed class SingleSelectEditorScreen<T> : Screen, IStep
 {

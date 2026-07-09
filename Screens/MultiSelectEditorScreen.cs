@@ -2,8 +2,8 @@ using CreateSbx.Widgets;
 
 namespace CreateSbx.Screens;
 
-/// <summary>A checklist step. Space toggles the highlighted row, Escape pops the whole popup
-/// (discarding the selection), Enter hands the checked items back via
+/// <summary>A checklist step. Space toggles the highlighted row, Escape pops back to the previous screen
+/// (discarding the selection and returning to the previous screen), Enter hands the checked items back via
 /// <paramref name="onConfirm"/>.</summary>
 internal sealed class MultiSelectEditorScreen<T> : Screen, IStep
 {

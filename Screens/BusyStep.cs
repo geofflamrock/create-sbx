@@ -3,7 +3,7 @@ using CreateSbx.Widgets;
 namespace CreateSbx.Screens;
 
 /// <summary>Shown while a background job (git fetch, etc.) is running. Escape still pops the
-/// popup — the owning composite screen cancels the job via <c>OnLeave</c>.</summary>
+/// screen — the owning composite screen cancels the job via <c>OnLeave</c>.</summary>
 internal sealed class BusyStep : IStep
 {
     private readonly SpinnerWidget _spinner = new SpinnerWidget().Kind(SpinnerKind.Default);

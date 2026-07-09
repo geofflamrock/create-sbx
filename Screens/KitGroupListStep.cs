@@ -4,8 +4,8 @@ using CreateSbx.Widgets;
 namespace CreateSbx.Screens;
 
 /// <summary>The Kits field's top-level step: lists added kit sources plus a trailing "+ Add kit
-/// source" row. Enter opens a source for add/edit, Delete/'d' removes one, Escape closes the
-/// popup keeping whatever sources exist (this step manages a list, not a single pending value).</summary>
+/// source" row. Enter opens a source for add/edit, Delete/'d' removes one, Escape pops back
+/// keeping whatever sources exist (this step manages a list, not a single pending value).</summary>
 internal sealed class KitGroupListStep : IStep
 {
     private readonly SandboxConfig _config;

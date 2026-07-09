@@ -2,12 +2,12 @@ using CreateSbx.Widgets;
 
 namespace CreateSbx.Screens;
 
-/// <summary>A single-line text input step. Used standalone (pushed directly inside a
-/// <see cref="FieldPopup"/>) for simple fields like Name/Working directory, and embedded as one
-/// step of a composite field screen (e.g. entering a custom agent id, an image name, a branch).
-/// Escape always pops the whole popup; Enter validates (if a validator was supplied) and, once
-/// valid, hands control back to the caller via <paramref name="onConfirm"/> — which decides
-/// whether that means closing the popup or advancing to another step.</summary>
+/// <summary>A single-line text input step. Used standalone (pushed directly, replacing the
+/// current screen) for simple fields like Name/Working directory, and embedded as one step of a
+/// composite field screen (e.g. entering a custom agent id, an image name, a branch). Escape
+/// always pops back to the previous screen; Enter validates (if a validator was supplied) and,
+/// once valid, hands control back to the caller via <paramref name="onConfirm"/> — which decides
+/// whether that means popping back or advancing to another step.</summary>
 internal sealed class TextFieldEditorScreen : Screen, IStep
 {
     private readonly TextBoxWidget _textBox;

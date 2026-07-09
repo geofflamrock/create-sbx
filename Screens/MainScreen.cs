@@ -8,6 +8,7 @@ namespace CreateSbx.Screens;
 internal sealed class MainScreen : Screen
 {
     private const int MaxLogLines = 500;
+    private const int MaxVisibleLogLines = 8;
 
     private readonly SandboxConfig _config = new(RecentUrlsStore.Load());
     private readonly ListWidget<FieldListItem> _fields;
@@ -22,7 +23,8 @@ internal sealed class MainScreen : Screen
 
     public MainScreen()
     {
-        _fields = new ListWidget<FieldListItem>(BuildRows())
+        var rows = BuildRows();
+        _fields = new ListWidget<FieldListItem>(rows)
             .HighlightSymbol("→ ")
             .HighlightStyle(new Style(decoration: Decoration.Bold))
             .WrapAround()
@@ -34,22 +36,34 @@ internal sealed class MainScreen : Screen
 
         _layout = new Layout("Root")
             .SplitRows(
-                new Layout("Fields"),
-                new Layout("Preview").Size(10),
+                new Layout("Fields").Size(rows.Count),
+                new Layout("Preview").Size(3),
+                new Layout("Filler"),
                 new Layout("Help").Size(1));
     }
 
-    private List<FieldListItem> BuildRows() =>
-    [
-        new(FieldId.Name, "Name", () => _config.Name),
-        new(FieldId.Agent, "Agent", () => _config.AgentId),
-        new(FieldId.WorkDir, "Working directory", () => _config.WorkDir),
-        new(FieldId.WorkspaceMode, "Workspace mode", () => _config.WorkspaceMode.Name),
-        new(FieldId.Template, "Template", DescribeTemplate),
-        new(FieldId.Kits, "Kits", DescribeKits),
-        new(FieldId.Create, "Create sandbox", null),
-        new(FieldId.Exit, "Exit", null),
-    ];
+    private List<FieldListItem> BuildRows()
+    {
+        (FieldId Id, string Label, Func<string>? GetValue)[] fields =
+        [
+            (FieldId.Name, "Name", () => _config.Name),
+            (FieldId.Agent, "Agent", () => _config.AgentId),
+            (FieldId.WorkDir, "Working directory", () => _config.WorkDir),
+            (FieldId.WorkspaceMode, "Workspace mode", () => _config.WorkspaceMode.Name),
+            (FieldId.Template, "Template", DescribeTemplate),
+            (FieldId.Kits, "Kits", DescribeKits),
+        ];
+
+        var labelColumnWidth = fields.Max(f => f.Label.Length);
+
+        return
+        [
+            .. fields.Select(f => new FieldListItem(f.Id, f.Label, f.GetValue, labelColumnWidth)),
+            new(FieldId.Spacer, "", null),
+            new(FieldId.Create, "Create sandbox", null),
+            new(FieldId.Exit, "Exit", null),
+        ];
+    }
 
     private string DescribeTemplate()
     {
@@ -110,7 +124,36 @@ internal sealed class MainScreen : Screen
                 return;
             }
 
-            _fields.KeyMap.HandleKey(key);
+            if (_fields.KeyMap.MoveDown.Matches(key))
+            {
+                _fields.MoveDown();
+                SkipSpacer(forward: true);
+                return;
+            }
+
+            if (_fields.KeyMap.MoveUp.Matches(key))
+            {
+                _fields.MoveUp();
+                SkipSpacer(forward: false);
+                return;
+            }
+        }
+    }
+
+    private void SkipSpacer(bool forward)
+    {
+        if (_fields.SelectedItem?.Id != FieldId.Spacer)
+        {
+            return;
+        }
+
+        if (forward)
+        {
+            _fields.MoveDown();
+        }
+        else
+        {
+            _fields.MoveUp();
         }
     }
 
@@ -125,57 +168,52 @@ internal sealed class MainScreen : Screen
         switch (selected.Id)
         {
             case FieldId.Name:
-                context.Push(new FieldPopup(new Size(50, 6), "Name",
-                    new TextFieldEditorScreen("Sandbox name", _config.Name, (ctx, value) =>
-                    {
-                        _config.Name = value;
-                        ctx.Pop();
-                    })));
+                context.Push(new TextFieldEditorScreen("Sandbox name", _config.Name, (ctx, value) =>
+                {
+                    _config.Name = value;
+                    ctx.Pop();
+                }));
                 break;
 
             case FieldId.Agent:
-                context.Push(new FieldPopup(new Size(60, 14), "Agent",
-                    new AgentFieldScreen(_config.AgentId, (ctx, id) =>
-                    {
-                        _config.AgentId = id;
-                        ctx.Pop();
-                    })));
+                context.Push(new AgentFieldScreen(_config.AgentId, (ctx, id) =>
+                {
+                    _config.AgentId = id;
+                    ctx.Pop();
+                }));
                 break;
 
             case FieldId.WorkDir:
-                context.Push(new FieldPopup(new Size(50, 6), "Working directory",
-                    new TextFieldEditorScreen("Working directory", _config.WorkDir, (ctx, value) =>
-                    {
-                        _config.WorkDir = value;
-                        ctx.Pop();
-                    })));
+                context.Push(new TextFieldEditorScreen("Working directory", _config.WorkDir, (ctx, value) =>
+                {
+                    _config.WorkDir = value;
+                    ctx.Pop();
+                }));
                 break;
 
             case FieldId.WorkspaceMode:
-                context.Push(new FieldPopup(new Size(60, 8), "Workspace mode",
-                    new SingleSelectEditorScreen<WorkspaceModeOption>(
-                        "Select workspace mode",
-                        SandboxConfig.WorkspaceModes,
-                        m => $"{m.Name} [grey]- {MarkupText.Escape(m.Description)}[/]",
-                        (ctx, mode) =>
-                        {
-                            _config.WorkspaceMode = mode;
-                            ctx.Pop();
-                        },
-                        SandboxConfig.WorkspaceModes.ToList().IndexOf(_config.WorkspaceMode))));
+                context.Push(new SingleSelectEditorScreen<WorkspaceModeOption>(
+                    "Select workspace mode",
+                    SandboxConfig.WorkspaceModes,
+                    m => $"{m.Name} [grey]- {MarkupText.Escape(m.Description)}[/]",
+                    (ctx, mode) =>
+                    {
+                        _config.WorkspaceMode = mode;
+                        ctx.Pop();
+                    },
+                    SandboxConfig.WorkspaceModes.ToList().IndexOf(_config.WorkspaceMode)));
                 break;
 
             case FieldId.Template:
-                context.Push(new FieldPopup(new Size(70, 16), "Template",
-                    new TemplateFieldScreen(_config, (ctx, template) =>
-                    {
-                        _config.Template = template;
-                        ctx.Pop();
-                    })));
+                context.Push(new TemplateFieldScreen(_config, (ctx, template) =>
+                {
+                    _config.Template = template;
+                    ctx.Pop();
+                }));
                 break;
 
             case FieldId.Kits:
-                context.Push(new FieldPopup(new Size(70, 16), "Kits", new KitsFieldScreen(_config)));
+                context.Push(new KitsFieldScreen(_config));
                 break;
 
             case FieldId.Create:
@@ -239,15 +277,20 @@ internal sealed class MainScreen : Screen
 
     public override void Render(RenderContext context)
     {
-        context.Render(
-            new BoxWidget().Border(Border.Rounded).TitlePadding(1).MarkupTitle("[bold]create-sbx[/]").Inner(_fields),
-            _layout.GetArea(context, "Fields"));
+        var visibleLogLines = Math.Clamp(_log.Count, 0, MaxVisibleLogLines);
+        _layout.GetLayout("Preview").Size(2 + 1 + visibleLogLines);
+
+        context.Render(_fields, _layout.GetArea(context, "Fields"));
 
         context.Render(
-            new BoxWidget().Border(Border.Rounded).TitlePadding(1).MarkupTitle("[bold]Preview[/]").Inner(_previewContent),
+            new BoxWidget()
+                .Border(Border.Rounded)
+                .TitlePadding(1)
+                .MarkupTitle("[bold]Preview[/]")
+                .Inner(new PaddingWidget(new Padding(1, 0), _previewContent)),
             _layout.GetArea(context, "Preview"));
 
-        context.Render(new HelpWidget(_keyMap, _fields.KeyMap), _layout.GetArea(context, "Help"));
+        context.Render(new HelpWidget(_keyMap, _fields.KeyMap).LeftAligned(), _layout.GetArea(context, "Help"));
     }
 
     private sealed class PreviewContent(Func<string> getCommand, ScrollViewWidget logScroller) : IWidget
