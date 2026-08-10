@@ -74,7 +74,7 @@ async Task<int> RunAsync()
     var recentWorkspaceDirectories = LoadRecentWorkspaceDirectories();
     var additionalWorkspaceDirectories = PromptForWorkspaceDirectories(recentWorkspaceDirectories);
 
-    var diskSizes = PromptForDiskSizes();
+    var diskSizes = PromptForDiskSizes(workspaceMode);
 
     var displayTemplateName = template?.Source is TemplateSource.GitRepo or TemplateSource.Local
         ? "<image-id>"
@@ -345,20 +345,20 @@ static string PromptForWorkspaceDirectory(List<string> recentWorkspaceDirectorie
     return directory.Trim();
 }
 
-static DiskSizeConfig PromptForDiskSizes()
+static DiskSizeConfig PromptForDiskSizes(WorkspaceMode workspaceMode)
 {
     string? rootSize = null, dockerSize = null, clonedWorkspaceSize = null;
 
     if (AnsiConsole.Confirm("Customize disk sizes?", false))
     {
         if (AnsiConsole.Confirm("Set the [green]root[/] disk size?", false))
-            rootSize = AnsiConsole.Ask<string>("Enter the [green]root disk size[/] [grey](e.g. 20GB)[/]:").Trim();
+            rootSize = AnsiConsole.Ask<string>("Enter the [green]root disk size[/] [grey](e.g. 20g)[/]:").Trim();
 
         if (AnsiConsole.Confirm("Set the [green]Docker[/] disk size?", false))
-            dockerSize = AnsiConsole.Ask<string>("Enter the [green]Docker disk size[/] [grey](e.g. 20GB)[/]:").Trim();
+            dockerSize = AnsiConsole.Ask<string>("Enter the [green]Docker disk size[/] [grey](e.g. 20g)[/]:").Trim();
 
-        if (AnsiConsole.Confirm("Set the [green]clone[/] disk size?", false))
-            clonedWorkspaceSize = AnsiConsole.Ask<string>("Enter the [green]clone disk size[/] [grey](e.g. 20GB)[/]:").Trim();
+        if (workspaceMode.UseClone && AnsiConsole.Confirm("Set the [green]clone[/] disk size?", false))
+            clonedWorkspaceSize = AnsiConsole.Ask<string>("Enter the [green]clone disk size[/] [grey](e.g. 20g)[/]:").Trim();
     }
 
     return new DiskSizeConfig(rootSize, dockerSize, clonedWorkspaceSize);
