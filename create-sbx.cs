@@ -417,10 +417,7 @@ static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
 
 static string BuildDisplayCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir, List<string> additionalWorkspaceDirectories, DiskSizeConfig diskSizes)
 {
-    var parts = new List<string>();
-    parts.AddRange(BuildDiskSizeEnvironmentVariables(diskSizes).Select(v => $"{v.Key}={v.Value}"));
-    parts.Add("sbx create");
-    parts.Add($"--name \"{name}\"");
+    var parts = new List<string> { "sbx create", $"--name \"{name}\"" };
     if (templateName is not null) parts.Add($"--template \"{templateName}\"");
     if (kitUrls.Count > 0) parts.Add(string.Join(" ", kitUrls.Select(u => $"--kit \"{u}\"")));
     if (workspaceMode.UseClone) parts.Add("--clone");
@@ -428,7 +425,20 @@ static string BuildDisplayCommand(string name, string? templateName, List<string
     parts.Add($"\"{workDir}\"");
     if (additionalWorkspaceDirectories.Count > 0)
         parts.Add(string.Join(" ", additionalWorkspaceDirectories.Select(d => $"\"{d}\"")));
-    return string.Join(" ", parts);
+    var command = string.Join(" ", parts);
+
+    var envVars = BuildDiskSizeEnvironmentVariables(diskSizes);
+    if (envVars.Count == 0)
+        return command;
+
+    if (OperatingSystem.IsWindows())
+    {
+        var envAssignments = string.Join(" ", envVars.Select(v => $"$env:{v.Key} = \"{v.Value}\";"));
+        return $"{envAssignments} {command}";
+    }
+
+    var envPrefix = string.Join(" ", envVars.Select(v => $"{v.Key}={v.Value}"));
+    return $"{envPrefix} {command}";
 }
 
 static void PrintCommand(string command)
