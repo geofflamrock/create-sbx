@@ -74,6 +74,8 @@ async Task<int> RunAsync()
     var recentWorkspaceDirectories = LoadRecentWorkspaceDirectories();
     var additionalWorkspaceDirectories = PromptForWorkspaceDirectories(recentWorkspaceDirectories);
 
+    var diskSizes = PromptForDiskSizes();
+
     var displayTemplateName = template?.Source is TemplateSource.GitRepo or TemplateSource.Local
         ? "<image-id>"
         : template?.ImageName;
@@ -84,7 +86,7 @@ async Task<int> RunAsync()
         AnsiConsole.MarkupLine($"[yellow]The Dockerfile [cyan]{Markup.Escape(template.DockerfilePath!)}[/] will be built before creating the sandbox.[/]");
         AnsiConsole.WriteLine();
     }
-    PrintSbxCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir, additionalWorkspaceDirectories);
+    PrintSbxCommand(name, displayTemplateName, allKitUrls, workspaceMode, agentId, workDir, additionalWorkspaceDirectories, diskSizes);
     AnsiConsole.WriteLine();
 
     if (AnsiConsole.Confirm("Create the sandbox?"))
@@ -117,7 +119,7 @@ async Task<int> RunAsync()
         if (template?.Source is TemplateSource.GitRepo or TemplateSource.Local)
         {
             AnsiConsole.WriteLine();
-            PrintSbxCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir, additionalWorkspaceDirectories);
+            PrintSbxCommand(name, effectiveTemplateName, allKitUrls, workspaceMode, agentId, workDir, additionalWorkspaceDirectories, diskSizes);
         }
 
         AnsiConsole.WriteLine();
@@ -126,6 +128,8 @@ async Task<int> RunAsync()
         var psi = new ProcessStartInfo("sbx") { UseShellExecute = false };
         foreach (var arg in sbxArgs)
             psi.ArgumentList.Add(arg);
+        foreach (var (key, value) in BuildDiskSizeEnvironmentVariables(diskSizes))
+            psi.Environment[key] = value;
         using var proc = Process.Start(psi)!;
         await proc.WaitForExitAsync();
         if (proc.ExitCode != 0)
@@ -341,6 +345,34 @@ static string PromptForWorkspaceDirectory(List<string> recentWorkspaceDirectorie
     return directory.Trim();
 }
 
+static DiskSizeConfig PromptForDiskSizes()
+{
+    string? rootSize = null, dockerSize = null, clonedWorkspaceSize = null;
+
+    if (AnsiConsole.Confirm("Customize disk sizes?", false))
+    {
+        if (AnsiConsole.Confirm("Set the [green]root[/] disk size?", false))
+            rootSize = AnsiConsole.Ask<string>("Enter the [green]root disk size[/] [grey](e.g. 20GB)[/]:").Trim();
+
+        if (AnsiConsole.Confirm("Set the [green]Docker[/] disk size?", false))
+            dockerSize = AnsiConsole.Ask<string>("Enter the [green]Docker disk size[/] [grey](e.g. 20GB)[/]:").Trim();
+
+        if (AnsiConsole.Confirm("Set the [green]clone[/] disk size?", false))
+            clonedWorkspaceSize = AnsiConsole.Ask<string>("Enter the [green]clone disk size[/] [grey](e.g. 20GB)[/]:").Trim();
+    }
+
+    return new DiskSizeConfig(rootSize, dockerSize, clonedWorkspaceSize);
+}
+
+static List<(string Key, string Value)> BuildDiskSizeEnvironmentVariables(DiskSizeConfig diskSizes)
+{
+    var vars = new List<(string Key, string Value)>();
+    if (diskSizes.RootSize is not null) vars.Add(("DOCKER_SANDBOXES_ROOT_SIZE", diskSizes.RootSize));
+    if (diskSizes.DockerSize is not null) vars.Add(("DOCKER_SANDBOXES_DOCKER_SIZE", diskSizes.DockerSize));
+    if (diskSizes.ClonedWorkspaceSize is not null) vars.Add(("DOCKER_SANDBOXES_CLONED_WORKSPACE_SIZE", diskSizes.ClonedWorkspaceSize));
+    return vars;
+}
+
 static void AddRecentUrl(List<string> urls, string url) =>
     AddRecentEntry(urls, url, SaveRecentUrls);
 
@@ -355,9 +387,9 @@ static void AddRecentEntry(List<string> entries, string entry, Action<List<strin
     save(entries);
 }
 
-static void PrintSbxCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir, List<string> additionalWorkspaceDirectories)
+static void PrintSbxCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir, List<string> additionalWorkspaceDirectories, DiskSizeConfig diskSizes)
 {
-    PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir, additionalWorkspaceDirectories));
+    PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir, additionalWorkspaceDirectories, diskSizes));
 }
 
 static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
@@ -379,9 +411,12 @@ static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
     return url.Trim().TrimEnd('/');
 }
 
-static string BuildDisplayCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir, List<string> additionalWorkspaceDirectories)
+static string BuildDisplayCommand(string name, string? templateName, List<string> kitUrls, WorkspaceMode workspaceMode, string agentId, string workDir, List<string> additionalWorkspaceDirectories, DiskSizeConfig diskSizes)
 {
-    var parts = new List<string> { "sbx create", $"--name \"{name}\"" };
+    var parts = new List<string>();
+    parts.AddRange(BuildDiskSizeEnvironmentVariables(diskSizes).Select(v => $"{v.Key}={v.Value}"));
+    parts.Add("sbx create");
+    parts.Add($"--name \"{name}\"");
     if (templateName is not null) parts.Add($"--template \"{templateName}\"");
     if (kitUrls.Count > 0) parts.Add(string.Join(" ", kitUrls.Select(u => $"--kit \"{u}\"")));
     if (workspaceMode.UseClone) parts.Add("--clone");
@@ -656,4 +691,5 @@ record WorkspaceMode(string Name, string Description, bool UseClone);
 record MountMode(string Name, bool ReadOnly);
 record TemplateSourceOption(TemplateSource Source, string DisplayName);
 record TemplateConfig(TemplateSource Source, string ImageName, string? DockerfilePath, string? DockerContext, string? Branch = null);
+record DiskSizeConfig(string? RootSize, string? DockerSize, string? ClonedWorkspaceSize);
 enum TemplateSource { Registry, GitRepo, Local }
