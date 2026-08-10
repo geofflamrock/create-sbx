@@ -351,17 +351,21 @@ static DiskSizeConfig PromptForDiskSizes(WorkspaceMode workspaceMode)
 
     if (AnsiConsole.Confirm("Customize disk sizes?", false))
     {
-        if (AnsiConsole.Confirm("Set the [green]root[/] disk size?", false))
-            rootSize = AnsiConsole.Ask<string>("Enter the [green]root disk size[/] [grey](e.g. 20g)[/]:").Trim();
-
-        if (AnsiConsole.Confirm("Set the [green]Docker[/] disk size?", false))
-            dockerSize = AnsiConsole.Ask<string>("Enter the [green]Docker disk size[/] [grey](e.g. 20g)[/]:").Trim();
-
-        if (workspaceMode.UseClone && AnsiConsole.Confirm("Set the [green]clone[/] disk size?", false))
-            clonedWorkspaceSize = AnsiConsole.Ask<string>("Enter the [green]clone disk size[/] [grey](e.g. 20g)[/]:").Trim();
+        rootSize = PromptForDiskSize("root");
+        dockerSize = PromptForDiskSize("Docker");
+        if (workspaceMode.UseClone)
+            clonedWorkspaceSize = PromptForDiskSize("clone");
     }
 
     return new DiskSizeConfig(rootSize, dockerSize, clonedWorkspaceSize);
+}
+
+static string? PromptForDiskSize(string name)
+{
+    var input = AnsiConsole.Prompt(
+        new TextPrompt<string>($"Enter the [green]{name}[/] disk size [grey](e.g. 20g, leave blank to keep the default)[/]:")
+            .AllowEmpty());
+    return string.IsNullOrWhiteSpace(input) ? null : input.Trim();
 }
 
 static List<(string Key, string Value)> BuildDiskSizeEnvironmentVariables(DiskSizeConfig diskSizes)
