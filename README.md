@@ -4,7 +4,11 @@ An interactive CLI for creating [Docker Sandboxes](https://docs.docker.com/ai/sa
 
 ## Features
 
-Supports the following options when creating a sandbox:
+The first question asked is how you want to create the sandbox:
+- **Sandbox environment**: Enter a Git repository URL and branch, then select a `.sbxenv.yaml` file found (recursively) in the repository. `create-sbx` runs `sbx env create` against the selected file.
+- **Sandbox properties**: Build a sandbox by specifying each property individually, as described below.
+
+Supports the following options when creating a sandbox from properties:
 - **Sandbox name**: Defaults to the current directory name.
 - **Agent**: Select from the standard list of agents available in `sbx` or enter a custom agent identifier (from a kit).
 - **Workspace directory**: The local directory to mount, defaults to `.`.
@@ -13,6 +17,8 @@ Supports the following options when creating a sandbox:
 - **Kits** (optional): Select kits to add from a Git repository.
 - **Additional workspace directories** (optional): Extra directories to mount, each as read/write or read-only.
 - **Customizing disk sizes (optional)**: Set the environment variables which control disk size for the root, Docker and Clone disks.
+
+The sandbox environment path also lets you customize the root and Docker disk sizes before confirming and running the generated `sbx env create` command.
 
 ## Install
 
