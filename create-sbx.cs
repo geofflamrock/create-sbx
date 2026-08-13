@@ -28,6 +28,11 @@ async Task<int> RunAsync()
     if (creationMode.UseEnvironment)
         return await RunEnvironmentFlowAsync(recentUrls, fetchedRepos);
 
+    return await RunPropertiesFlowAsync(recentUrls, fetchedRepos);
+}
+
+async Task<int> RunPropertiesFlowAsync(List<string> recentUrls, HashSet<string> fetchedRepos)
+{
     var defaultName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
     var name = AnsiConsole.Prompt(
         new TextPrompt<string>("Enter the [green]sandbox name[/]:")
@@ -196,7 +201,7 @@ async Task<int> RunEnvironmentFlowAsync(List<string> recentUrls, HashSet<string>
     var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
     AnsiConsole.MarkupLine($"Environment: [cyan]{Markup.Escape(selectedEnvironment.Name)}[/] from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}");
 
-    var diskSizes = PromptForDiskSizes(includeClonedWorkspaceSize: false);
+    var diskSizes = PromptForDiskSizes(includeClonedWorkspaceSize: selectedEnvironment.UseClone);
 
     AnsiConsole.WriteLine();
     PrintEnvCommand(selectedEnvironment.Path, diskSizes);
@@ -677,7 +682,8 @@ static List<SandboxEnvironment> FindSandboxEnvironments(string cloneDir)
     {
         var yaml = File.ReadAllText(file);
         var name = ParseEnvironmentName(yaml) ?? Path.GetFileName(Path.GetDirectoryName(file))!;
-        environments.Add(new SandboxEnvironment(name, file));
+        var useClone = ParseWorkspaceClone(yaml);
+        environments.Add(new SandboxEnvironment(name, file, useClone));
     }
     return environments;
 }
@@ -845,6 +851,16 @@ static string? ParseEnvironmentName(string yaml)
     return null;
 }
 
+static bool ParseWorkspaceClone(string yaml)
+{
+    var workspaceMatch = Regex.Match(yaml, @"^workspace:\s*\n((?:[ \t]+.*\n?)*)", RegexOptions.Multiline);
+    if (!workspaceMatch.Success)
+        return false;
+
+    var cloneMatch = Regex.Match(workspaceMatch.Groups[1].Value, @"^\s*clone:\s*(true|false)\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    return cloneMatch.Success && bool.Parse(cloneMatch.Groups[1].Value);
+}
+
 record AgentOption(string Id, string DisplayName, string? Description);
 record Kit(string? Directory, string DisplayName, string? Description);
 record WorkspaceMode(string Name, string Description, bool UseClone);
@@ -853,5 +869,5 @@ record TemplateSourceOption(TemplateSource Source, string DisplayName);
 record TemplateConfig(TemplateSource Source, string ImageName, string? DockerfilePath, string? DockerContext, string? Branch = null);
 record DiskSizeConfig(string? RootSize, string? DockerSize, string? ClonedWorkspaceSize);
 record CreationMode(string Name, string Description, bool UseEnvironment);
-record SandboxEnvironment(string Name, string Path);
+record SandboxEnvironment(string Name, string Path, bool UseClone);
 enum TemplateSource { Registry, GitRepo, Local }
