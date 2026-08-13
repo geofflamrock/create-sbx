@@ -203,8 +203,11 @@ async Task<int> CreateUsingSandboxEnvironment(List<string> recentUrls, HashSet<s
 
     var diskSizes = PromptForDiskSizes(includeClonedWorkspaceSize: selectedEnvironment.UseClone);
 
+    var envDir = Path.GetDirectoryName(selectedEnvironment.Path)!;
+    var envFileName = Path.GetFileName(selectedEnvironment.Path);
+
     AnsiConsole.WriteLine();
-    PrintEnvCommand(selectedEnvironment.Path, diskSizes);
+    PrintEnvCommand(envDir, envFileName, diskSizes);
     AnsiConsole.WriteLine();
 
     if (!AnsiConsole.Confirm("Create the sandbox?"))
@@ -214,10 +217,10 @@ async Task<int> CreateUsingSandboxEnvironment(List<string> recentUrls, HashSet<s
     AnsiConsole.MarkupLine($"Creating sandbox from environment [cyan]{Markup.Escape(selectedEnvironment.Name)}[/]...");
     AnsiConsole.WriteLine();
 
-    var psi = new ProcessStartInfo("sbx") { UseShellExecute = false };
+    var psi = new ProcessStartInfo("sbx") { UseShellExecute = false, WorkingDirectory = envDir };
     psi.ArgumentList.Add("env");
     psi.ArgumentList.Add("create");
-    psi.ArgumentList.Add(selectedEnvironment.Path);
+    psi.ArgumentList.Add(envFileName);
     foreach (var (key, value) in BuildDiskSizeEnvironmentVariables(diskSizes))
         psi.Environment[key] = value;
 
@@ -486,9 +489,17 @@ static void PrintSbxCommand(string name, string? templateName, List<string> kitU
     PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir, additionalWorkspaceDirectories, diskSizes));
 }
 
-static void PrintEnvCommand(string envFilePath, DiskSizeConfig diskSizes)
+static void PrintEnvCommand(string envDir, string envFileName, DiskSizeConfig diskSizes)
 {
-    PrintCommand(WithDiskSizeEnvironmentVariables($"sbx env create \"{envFilePath}\"", diskSizes));
+    PrintCommand(BuildEnvDisplayCommand(envDir, envFileName, diskSizes));
+}
+
+static string BuildEnvDisplayCommand(string envDir, string envFileName, DiskSizeConfig diskSizes)
+{
+    var command = WithDiskSizeEnvironmentVariables($"sbx env create \"{envFileName}\"", diskSizes);
+    return OperatingSystem.IsWindows()
+        ? $"Set-Location \"{envDir}\"; {command}"
+        : $"cd \"{envDir}\" && {command}";
 }
 
 static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
