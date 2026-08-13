@@ -522,20 +522,29 @@ static List<Kit> FindKits(string cloneDir)
         kits.Add(new Kit(null, displayName!, description));
     }
 
-    foreach (var dir in Directory.GetDirectories(cloneDir).Order())
+    FindKitsRecursive(cloneDir, cloneDir, kits);
+    return kits;
+}
+
+static void FindKitsRecursive(string baseDir, string currentDir, List<Kit> kits)
+{
+    foreach (var dir in Directory.GetDirectories(currentDir).Order())
     {
         var dirName = Path.GetFileName(dir)!;
         if (dirName.StartsWith('.')) continue;
 
         var specFile = Path.Combine(dir, "spec.yaml");
-        if (!File.Exists(specFile)) continue;
+        if (File.Exists(specFile))
+        {
+            var relativeDir = Path.GetRelativePath(baseDir, dir).Replace(Path.DirectorySeparatorChar, '/');
+            var specYaml = File.ReadAllText(specFile);
+            var displayName = ParseDisplayName(specYaml) ?? dirName;
+            var description = ParseDescription(specYaml);
+            kits.Add(new Kit(relativeDir, displayName, description));
+        }
 
-        var specYaml = File.ReadAllText(specFile);
-        var displayName = ParseDisplayName(specYaml) ?? dirName;
-        var description = ParseDescription(specYaml);
-        kits.Add(new Kit(dirName, displayName, description));
+        FindKitsRecursive(baseDir, dir, kits);
     }
-    return kits;
 }
 
 static List<string> FindDockerfiles(string repoDir)
