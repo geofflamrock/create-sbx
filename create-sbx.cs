@@ -26,12 +26,12 @@ async Task<int> RunAsync()
     var fetchedRepos = new HashSet<string>();
 
     if (creationMode.UseEnvironment)
-        return await RunEnvironmentFlowAsync(recentUrls, fetchedRepos);
+        return await CreateUsingSandboxEnvironmentAsync(recentUrls, fetchedRepos);
 
-    return await RunPropertiesFlowAsync(recentUrls, fetchedRepos);
+    return await CreateUsingSandboxPropertiesAsync(recentUrls, fetchedRepos);
 }
 
-async Task<int> RunPropertiesFlowAsync(List<string> recentUrls, HashSet<string> fetchedRepos)
+async Task<int> CreateUsingSandboxPropertiesAsync(List<string> recentUrls, HashSet<string> fetchedRepos)
 {
     var defaultName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
     var name = AnsiConsole.Prompt(
@@ -158,7 +158,7 @@ async Task<int> RunPropertiesFlowAsync(List<string> recentUrls, HashSet<string> 
     return 0;
 }
 
-async Task<int> RunEnvironmentFlowAsync(List<string> recentUrls, HashSet<string> fetchedRepos)
+async Task<int> CreateUsingSandboxEnvironmentAsync(List<string> recentUrls, HashSet<string> fetchedRepos)
 {
     var repoUrl = PromptForUrl(recentUrls, "environment");
     var (owner, repo) = ParseGitHubUrl(repoUrl);
