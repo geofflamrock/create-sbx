@@ -18,9 +18,11 @@ async Task<int> RunAsync()
         new SelectionPrompt<CreationMode>()
             .Title("How do you want to create the sandbox?")
             .AddChoices(
-                new CreationMode("Sandbox environment", "Create from a shared sandbox environment definition", true),
+                new CreationMode("Sandbox environment", "Create from a shared sandbox environment definition (requires sbx 0.39.0+)", true),
                 new CreationMode("Sandbox properties", "Create by specifying sandbox properties", false))
             .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
+
+    AnsiConsole.MarkupLine($"Creation mode: [cyan]{creationMode.Name}[/]");
 
     var recentUrls = LoadRecentUrls();
     var fetchedRepos = new HashSet<string>();
