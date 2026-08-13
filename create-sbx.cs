@@ -14,6 +14,27 @@ return await rootCommand.Parse(args).InvokeAsync();
 
 async Task<int> RunAsync()
 {
+    var creationMode = AnsiConsole.Prompt(
+        new SelectionPrompt<CreationMode>()
+            .Title("How do you want to create the sandbox?")
+            .AddChoices(
+                new CreationMode("Sandbox environment", "Create from a shared sandbox environment definition (requires sbx 0.39.0+)", true),
+                new CreationMode("Sandbox properties", "Create by specifying sandbox properties", false))
+            .UseConverter(m => $"{m.Name} [grey]- {m.Description}[/]"));
+
+    AnsiConsole.MarkupLine($"Creation mode: [cyan]{creationMode.Name}[/]");
+
+    var recentUrls = LoadRecentUrls();
+    var fetchedRepos = new HashSet<string>();
+
+    if (creationMode.UseEnvironment)
+        return await CreateUsingSandboxEnvironment(recentUrls, fetchedRepos);
+
+    return await CreateUsingSandboxProperties(recentUrls, fetchedRepos);
+}
+
+async Task<int> CreateUsingSandboxProperties(List<string> recentUrls, HashSet<string> fetchedRepos)
+{
     var defaultName = new DirectoryInfo(Directory.GetCurrentDirectory()).Name;
     var name = AnsiConsole.Prompt(
         new TextPrompt<string>("Enter the [green]sandbox name[/]:")
@@ -65,16 +86,13 @@ async Task<int> RunAsync()
 
     AnsiConsole.MarkupLine($"Workspace mode: [cyan]{workspaceMode.Name}[/]");
 
-    var recentUrls = LoadRecentUrls();
-    var fetchedRepos = new HashSet<string>();
-
     var template = await PromptForTemplate(recentUrls, fetchedRepos);
     var allKitUrls = await PromptForKits(recentUrls, fetchedRepos);
 
     var recentWorkspaceDirectories = LoadRecentWorkspaceDirectories();
     var additionalWorkspaceDirectories = PromptForWorkspaceDirectories(recentWorkspaceDirectories);
 
-    var diskSizes = PromptForDiskSizes(workspaceMode);
+    var diskSizes = PromptForDiskSizes(workspaceMode.UseClone);
 
     var displayTemplateName = template?.Source is TemplateSource.GitRepo or TemplateSource.Local
         ? "<image-id>"
@@ -137,6 +155,83 @@ async Task<int> RunAsync()
             AnsiConsole.MarkupLine($"[red]sbx exited with code {proc.ExitCode}[/]");
             return proc.ExitCode;
         }
+    }
+
+    return 0;
+}
+
+async Task<int> CreateUsingSandboxEnvironment(List<string> recentUrls, HashSet<string> fetchedRepos)
+{
+    var repoUrl = PromptForUrl(recentUrls, "environment");
+    var (owner, repo) = ParseGitHubUrl(repoUrl);
+    if (owner is null || repo is null)
+    {
+        AnsiConsole.MarkupLine("[red]Invalid GitHub repository URL. Expected format: https://github.com/owner/repo[/]");
+        return 1;
+    }
+
+    AddRecentUrl(recentUrls, repoUrl);
+
+    var branch = AnsiConsole.Prompt(
+        new TextPrompt<string>("Enter [green]branch[/] (leave blank for default):")
+            .AllowEmpty());
+
+    List<SandboxEnvironment> environments = [];
+    await AnsiConsole.Status()
+        .Spinner(Spinner.Known.Dots)
+        .StartAsync("Fetching repository...", async ctx =>
+        {
+            var cloneDir = await EnsureRepo(owner, repo, branch, ctx, fetchedRepos);
+            environments = FindSandboxEnvironments(cloneDir);
+        });
+
+    if (environments.Count == 0)
+    {
+        AnsiConsole.MarkupLine("[yellow]No sandbox environments found in the repository.[/]");
+        return 1;
+    }
+
+    AnsiConsole.MarkupLine($"[green]Found {environments.Count} sandbox environment(s).[/]");
+
+    var selectedEnvironment = AnsiConsole.Prompt(
+        new SelectionPrompt<SandboxEnvironment>()
+            .Title("Select a [green]sandbox environment[/]:")
+            .PageSize(20)
+            .AddChoices(environments)
+            .UseConverter(e => e.Name));
+
+    var branchLabel = string.IsNullOrEmpty(branch) ? "" : $" [grey]({Markup.Escape(branch)})[/]";
+    AnsiConsole.MarkupLine($"Environment: [cyan]{Markup.Escape(selectedEnvironment.Name)}[/] from [cyan]{Markup.Escape(repoUrl)}[/]{branchLabel}");
+
+    var diskSizes = PromptForDiskSizes(includeClonedWorkspaceSize: selectedEnvironment.UseClone);
+
+    var envDir = Path.GetDirectoryName(selectedEnvironment.Path)!;
+    var envFileName = Path.GetFileName(selectedEnvironment.Path);
+
+    AnsiConsole.WriteLine();
+    PrintEnvCommand(envDir, envFileName, diskSizes);
+    AnsiConsole.WriteLine();
+
+    if (!AnsiConsole.Confirm("Create the sandbox?"))
+        return 0;
+
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine($"Creating sandbox from environment [cyan]{Markup.Escape(selectedEnvironment.Name)}[/]...");
+    AnsiConsole.WriteLine();
+
+    var psi = new ProcessStartInfo("sbx") { UseShellExecute = false, WorkingDirectory = envDir };
+    psi.ArgumentList.Add("env");
+    psi.ArgumentList.Add("create");
+    psi.ArgumentList.Add(envFileName);
+    foreach (var (key, value) in BuildDiskSizeEnvironmentVariables(diskSizes))
+        psi.Environment[key] = value;
+
+    using var proc = Process.Start(psi)!;
+    await proc.WaitForExitAsync();
+    if (proc.ExitCode != 0)
+    {
+        AnsiConsole.MarkupLine($"[red]sbx exited with code {proc.ExitCode}[/]");
+        return proc.ExitCode;
     }
 
     return 0;
@@ -345,7 +440,7 @@ static string PromptForWorkspaceDirectory(List<string> recentWorkspaceDirectorie
     return directory.Trim();
 }
 
-static DiskSizeConfig PromptForDiskSizes(WorkspaceMode workspaceMode)
+static DiskSizeConfig PromptForDiskSizes(bool includeClonedWorkspaceSize)
 {
     string? rootSize = null, dockerSize = null, clonedWorkspaceSize = null;
 
@@ -353,7 +448,7 @@ static DiskSizeConfig PromptForDiskSizes(WorkspaceMode workspaceMode)
     {
         rootSize = PromptForDiskSize("root");
         dockerSize = PromptForDiskSize("Docker");
-        if (workspaceMode.UseClone)
+        if (includeClonedWorkspaceSize)
             clonedWorkspaceSize = PromptForDiskSize("clone");
     }
 
@@ -396,6 +491,19 @@ static void PrintSbxCommand(string name, string? templateName, List<string> kitU
     PrintCommand(BuildDisplayCommand(name, templateName, kitUrls, workspaceMode, agentId, workDir, additionalWorkspaceDirectories, diskSizes));
 }
 
+static void PrintEnvCommand(string envDir, string envFileName, DiskSizeConfig diskSizes)
+{
+    PrintCommand(BuildEnvDisplayCommand(envDir, envFileName, diskSizes));
+}
+
+static string BuildEnvDisplayCommand(string envDir, string envFileName, DiskSizeConfig diskSizes)
+{
+    var command = WithDiskSizeEnvironmentVariables($"sbx env create \"{envFileName}\"", diskSizes);
+    return OperatingSystem.IsWindows()
+        ? $"Set-Location \"{envDir}\"; {command}"
+        : $"cd \"{envDir}\" && {command}";
+}
+
 static string PromptForUrl(List<string> recentUrls, string purpose = "kit")
 {
     const string NewUrlOption = "Enter URL";
@@ -426,7 +534,11 @@ static string BuildDisplayCommand(string name, string? templateName, List<string
     if (additionalWorkspaceDirectories.Count > 0)
         parts.Add(string.Join(" ", additionalWorkspaceDirectories.Select(d => $"\"{d}\"")));
     var command = string.Join(" ", parts);
+    return WithDiskSizeEnvironmentVariables(command, diskSizes);
+}
 
+static string WithDiskSizeEnvironmentVariables(string command, DiskSizeConfig diskSizes)
+{
     var envVars = BuildDiskSizeEnvironmentVariables(diskSizes);
     if (envVars.Count == 0)
         return command;
@@ -576,6 +688,42 @@ static bool IsDockerfileName(string fileName) =>
     fileName.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase) ||
     fileName.EndsWith(".dockerfile", StringComparison.OrdinalIgnoreCase);
 
+static List<SandboxEnvironment> FindSandboxEnvironments(string cloneDir)
+{
+    var environments = new List<SandboxEnvironment>();
+    foreach (var file in FindSbxEnvFiles(cloneDir))
+    {
+        var yaml = File.ReadAllText(file);
+        var name = ParseEnvironmentName(yaml) ?? Path.GetFileName(Path.GetDirectoryName(file))!;
+        var useClone = ParseWorkspaceClone(yaml);
+        environments.Add(new SandboxEnvironment(name, file, useClone));
+    }
+    return environments;
+}
+
+static List<string> FindSbxEnvFiles(string repoDir)
+{
+    var results = new List<string>();
+    FindSbxEnvFilesRecursive(repoDir, results);
+    results.Sort();
+    return results;
+}
+
+static void FindSbxEnvFilesRecursive(string currentDir, List<string> results)
+{
+    foreach (var file in Directory.GetFiles(currentDir))
+    {
+        if (Path.GetFileName(file).Equals(".sbxenv.yaml", StringComparison.OrdinalIgnoreCase))
+            results.Add(file);
+    }
+
+    foreach (var dir in Directory.GetDirectories(currentDir))
+    {
+        if (Path.GetFileName(dir)!.StartsWith('.')) continue;
+        FindSbxEnvFilesRecursive(dir, results);
+    }
+}
+
 static async Task<string> BuildAndLoadDockerImage(TemplateConfig template)
 {
     var imagesDir = Path.Combine(Path.GetTempPath(), "create-sbx", "images");
@@ -708,6 +856,24 @@ static string? ParseDescription(string yaml)
     return null;
 }
 
+static string? ParseEnvironmentName(string yaml)
+{
+    var match = Regex.Match(yaml, @"^name:\s*(.+)$", RegexOptions.Multiline);
+    if (match.Success)
+        return match.Groups[1].Value.Trim().Trim('"');
+    return null;
+}
+
+static bool ParseWorkspaceClone(string yaml)
+{
+    var workspaceMatch = Regex.Match(yaml, @"^workspace:\s*\n((?:[ \t]+.*\n?)*)", RegexOptions.Multiline);
+    if (!workspaceMatch.Success)
+        return false;
+
+    var cloneMatch = Regex.Match(workspaceMatch.Groups[1].Value, @"^\s*clone:\s*(true|false)\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    return cloneMatch.Success && bool.Parse(cloneMatch.Groups[1].Value);
+}
+
 record AgentOption(string Id, string DisplayName, string? Description);
 record Kit(string? Directory, string DisplayName, string? Description);
 record WorkspaceMode(string Name, string Description, bool UseClone);
@@ -715,4 +881,6 @@ record MountMode(string Name, bool ReadOnly);
 record TemplateSourceOption(TemplateSource Source, string DisplayName);
 record TemplateConfig(TemplateSource Source, string ImageName, string? DockerfilePath, string? DockerContext, string? Branch = null);
 record DiskSizeConfig(string? RootSize, string? DockerSize, string? ClonedWorkspaceSize);
+record CreationMode(string Name, string Description, bool UseEnvironment);
+record SandboxEnvironment(string Name, string Path, bool UseClone);
 enum TemplateSource { Registry, GitRepo, Local }
